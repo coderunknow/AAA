@@ -90,7 +90,9 @@ TEST_CASE("animator: produces finite poses and footsteps while moving") {
   int steps = 0;
   for (int i = 0; i < 180; ++i) {
     g.update(1.0f / 60.0f, in, 0.0);
-    steps += g.animator().consumeFootstep() ? 1 : 0;
+    // Footfalls are surfaced as game events (consumed from the animator by Game::update).
+    for (const GameEvent& e : g.events()) steps += e.type == GameEvent::Footstep ? 1 : 0;
+    g.events().clear();
   }
   CHECK(steps >= 3);
   for (const PartPose& p : g.animator().parts()) {

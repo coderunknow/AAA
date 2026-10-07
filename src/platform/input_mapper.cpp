@@ -45,6 +45,8 @@ void InputMapper::handleEvent(const SDL_Event& e) {
         case SDL_SCANCODE_SPACE: if (down && !e.key.repeat) jump_ = true; break;
         case SDL_SCANCODE_C: if (down && !e.key.repeat) crouch_ = true; break;
         case SDL_SCANCODE_E: if (down && !e.key.repeat) interact_ = true; break;
+        case SDL_SCANCODE_F: if (down && !e.key.repeat) build_ = true; break;
+        case SDL_SCANCODE_R: if (down && !e.key.repeat) eat_ = true; break;
         case SDL_SCANCODE_F3: if (down && !e.key.repeat) debug_ = true; break;
         case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_P: if (down && !e.key.repeat) pause_ = true; break;
         default: break;
@@ -77,6 +79,8 @@ void InputMapper::handleEvent(const SDL_Event& e) {
         case SDL_GAMEPAD_BUTTON_SOUTH: jump_ = true; break;
         case SDL_GAMEPAD_BUTTON_EAST: crouch_ = true; break;
         case SDL_GAMEPAD_BUTTON_WEST: interact_ = true; break;
+        case SDL_GAMEPAD_BUTTON_NORTH: build_ = true; break;
+        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: eat_ = true; break;
         case SDL_GAMEPAD_BUTTON_START: pause_ = true; break;
         case SDL_GAMEPAD_BUTTON_BACK: debug_ = true; break;
         default: break;
@@ -116,11 +120,13 @@ InputFrame InputMapper::take() {
   f.jump = jump_;
   f.crouchToggle = crouch_;
   f.interact = interact_;
+  f.buildFire = build_;
+  f.eat = eat_;
   f.toggleDebug = debug_;
   f.pause = pause_;
   mouse_ = {};
   wheel_ = 0.0f;
-  jump_ = crouch_ = interact_ = debug_ = pause_ = false;
+  jump_ = crouch_ = interact_ = build_ = eat_ = debug_ = pause_ = false;
   return f;
 }
 

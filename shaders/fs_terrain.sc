@@ -69,6 +69,6 @@ void main() {
   vec3 v = normalize(u_camPos.xyz - wpos);
   float ao = mix(0.75, 1.0, dFine.r) * mix(1.0, 0.8, litter);
   float sh = sunShadow(wpos, n);
-  vec3 color = shadeSurface(albedo, nn, v, roughness, ao, sh);
+  vec3 color = shadeSurface(albedo, nn, v, roughness, ao, sh) + localLight(albedo, nn, wpos) * ao;
   gl_FragColor = vec4(applyFog(color, wpos), 1.0);
 }

@@ -13,7 +13,7 @@ if(EMSCRIPTEN)
     "-sMAX_WEBGL_VERSION=2" "-sMIN_WEBGL_VERSION=2"
     "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=256MB" "-sSTACK_SIZE=1MB"
     "-sENVIRONMENT=web" "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8']"
-    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']")
+    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_aaa_resume','_aaa_start_over']")
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     # (No -gsource-map: needs llvm-dwarfdump, absent from the sandbox LLVM; DWARF from -g is kept.)
     target_link_options(mistpine PRIVATE "-sASSERTIONS=1")
@@ -23,4 +23,12 @@ if(EMSCRIPTEN)
 else()
   # Native: copy-free asset lookup — the binary loads <build>/assets via SDL_GetBasePath()/../assets.
   target_compile_definitions(mistpine PRIVATE AAA_ASSET_DIR="${CMAKE_BINARY_DIR}/assets")
+endif()
+
+# Headless smoke runs (bgfx Noop renderer): full load -> play loop, including the QA scenarios.
+if(AAA_RENDERER_NOOP AND NOT EMSCRIPTEN AND AAA_BUILD_TESTS)
+  add_test(NAME smoke_day COMMAND mistpine --headless --frames 600 --hours 9)
+  add_test(NAME smoke_night_camp COMMAND mistpine --headless --frames 600 --hours 22 --qa camp)
+  add_test(NAME smoke_wolves COMMAND mistpine --headless --frames 600 --hours 23 --qa wolves)
+  set_tests_properties(smoke_day smoke_night_camp smoke_wolves PROPERTIES TIMEOUT 600)
 endif()

@@ -41,7 +41,7 @@ TEST_CASE("save: v1 saves migrate to the current schema") {
   CHECK_NEAR(d.playerPos.z, -4.0, 1e-6);
   CHECK(d.quality == 2);  // default settings
   // Re-saving writes the current version.
-  CHECK(serializeSave(d).find("\"version\":2") != std::string::npos);
+  CHECK(serializeSave(d).find("\"version\":3") != std::string::npos);
 }
 
 TEST_CASE("save: rejects corrupt, future, foreign and out-of-range data without touching output") {
@@ -51,7 +51,7 @@ TEST_CASE("save: rejects corrupt, future, foreign and out-of-range data without 
   CHECK(deserializeSave("{\"version\":2,", 1234, d) == SaveLoadResult::Corrupt);
   CHECK(deserializeSave("not json", 1234, d) == SaveLoadResult::Corrupt);
   CHECK(deserializeSave(serializeSave(sample()) + "x", 1234, d) == SaveLoadResult::Corrupt);
-  CHECK(deserializeSave(R"({"version":3})", 1234, d) == SaveLoadResult::UnsupportedVersion);
+  CHECK(deserializeSave(R"({"version":4})", 1234, d) == SaveLoadResult::UnsupportedVersion);
   CHECK(deserializeSave(serializeSave(sample()), 999, d) == SaveLoadResult::WrongWorld);
   SaveData bad = sample();
   bad.playerPos.x = 5000.0f;

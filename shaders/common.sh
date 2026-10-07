@@ -13,6 +13,8 @@ uniform vec4 u_camPos;        // xyz: camera position, w: time (s)
 uniform vec4 u_wind;          // xy: wind direction (xz), z: strength, w: gust
 uniform vec4 u_shadowParams;  // x: texel size (atlas uv), y: cascade split distance, z: enabled, w: far cascade range
 uniform mat4 u_shadowMtx[2];  // world -> shadow atlas (uv, depth) for each cascade
+uniform vec4 u_fireLight;     // xyz: nearest campfire light position, w: radius (0 = off)
+uniform vec4 u_fireColor;     // rgb: flickering fire radiance
 
 #define PI 3.14159265
 
@@ -55,6 +57,16 @@ vec3 shadeFoliage(vec3 _albedo, vec3 _n, vec3 _v, float _ao, float _shadow, floa
   vec3 direct = u_sunColor.rgb * _shadow * (_albedo * wrap + _albedo * vec3(1.1, 1.25, 0.6) * back);
   vec3 ambient = _albedo * hemiAmbient(_n) * _ao;
   return direct + ambient;
+}
+
+// Nearest campfire as a soft, unshadowed point light (wrap lighting keeps it warm on everything).
+vec3 localLight(vec3 _albedo, vec3 _n, vec3 _wpos) {
+  vec3 d = u_fireLight.xyz - _wpos;
+  float dist = length(d);
+  vec3 l = d / max(dist, 1e-3);
+  float att = (1.0 / (1.0 + dist * dist * 0.45)) * (1.0 - smoothstep(u_fireLight.w * 0.55, u_fireLight.w, dist));
+  float wrap = saturate1((dot(_n, l) + 0.35) / 1.35);
+  return _albedo * u_fireColor.rgb * (att * wrap);
 }
 
 // --- Atmosphere ----------------------------------------------------------------

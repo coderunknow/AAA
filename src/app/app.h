@@ -4,7 +4,9 @@
 #include <string>
 
 #include "game/game.h"
+#include "platform/audio_output.h"
 #include "platform/platform.h"
+#include "platform/storage.h"
 #include "render/renderer.h"
 
 namespace aaa {
@@ -15,7 +17,9 @@ struct AppOptions {
   QualityPreset quality = QualityPreset::High;
   std::string assetRoot;
   float startHours = -1.0f;  // override time of day (screenshots / QA)
-  bool debugOverlay = false;
+  bool debugOverlay = false;  // ?debug=1: shows the overlay and enables the F3 toggle
+  bool newGame = false;       // ?new=1: discard the saved journey
+  std::string qaScenario;     // ?qa=camp|shrine|wolves (visual QA only)
 };
 
 AppOptions parseOptions(int argc, char** argv);
@@ -28,10 +32,17 @@ class App {
   bool event(const SDL_Event& e);
   void shutdown();
   int exitCode() const { return exitCode_; }
+  // Called from the HTML shell (title / pause screens).
+  void resumeFromUi();
+  void startOverFromUi();
 
  private:
   enum class Stage { World, Renderer, Playing };
   void reportLoading();
+  void handleEvents();
+  void updateAudio();
+  void updateHud(float dt);
+  void saveNow(const char* reason);
 
   AppOptions opts_;
   Platform platform_;
@@ -43,6 +54,13 @@ class App {
   int exitCode_ = 0;
   bool quit_ = false;
   double loadStartMs_ = 0.0;
+  AudioOutput audio_;
+  MemoryStorage memoryStorage_;
+  KeyValueStorage* storage_ = nullptr;
+  bool hasSave_ = false;
+  double autosaveTimer_ = 0.0;
+  float hudTimer_ = 0.0f;
+  std::string lastPrompt_;
 };
 
 }  // namespace aaa

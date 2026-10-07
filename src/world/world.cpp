@@ -23,6 +23,7 @@ bool World::generateStep(double budgetMs) {
     fields_ = generator_->takeFields();
     generator_.reset();
     layout_.shrineTerraceHeight = hf_.height(layout_.shrine.x, layout_.shrine.y);
+    shrine_ = makeShrineLayout(layout_, hf_);
     ready_ = true;
   }
   return ready_;
@@ -123,7 +124,22 @@ float World::waterDepth(float x, float z) const {
   return std::fmax(0.0f, waterSurface(x, z) - hf_.height(x, z));
 }
 
+float World::slope(float x, float z) const {
+  const float e = 1.0f;
+  const float dx = hf_.height(x + e, z) - hf_.height(x - e, z);
+  const float dz = hf_.height(x, z + e) - hf_.height(x, z - e);
+  const Vec3 n = normalize(Vec3{-dx, 2.0f * e, -dz});
+  return 1.0f - n.y;
+}
+
 void World::forEachColliderNear(Vec2 p, float radius, const std::function<void(const CircleCollider&)>& fn) const {
+  if (ready_ && length(p - shrine_.center) < 40.0f + radius) {
+    for (const CircleCollider& col : shrine_.colliders) {
+      const Vec2 d = col.center - p;
+      const float r = col.radius + radius;
+      if (dot(d, d) <= r * r) fn(col);
+    }
+  }
   int cx0, cz0, cx1, cz1;
   chunkCoord(p.x - radius - 8.0f, p.y - radius - 8.0f, cx0, cz0);
   chunkCoord(p.x + radius + 8.0f, p.y + radius + 8.0f, cx1, cz1);

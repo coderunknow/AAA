@@ -9,6 +9,11 @@ uniform vec4 u_grade;  // rgb: highlight tint, w: shadow tint strength
 
 void main() {
   vec3 hdr = texture2D(s_hdr, v_texcoord0).rgb * u_post.x;
+  // Scotopic shift: in very dim light colour vision fades toward a cool blue-grey, so moonlit
+  // foliage stops reading as saturated green while firelit areas (brighter) keep their warmth.
+  float lumHdr = dot(hdr, vec3(0.2126, 0.7152, 0.0722));
+  float photopic = smoothstep(0.01, 0.10, lumHdr);
+  hdr = mix(vec3(0.72, 0.86, 1.12) * lumHdr * 1.1, hdr, photopic);
   vec3 c = tonemapACES(hdr);
   // Gentle split-tone: cool shadows, warm highlights.
   float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));

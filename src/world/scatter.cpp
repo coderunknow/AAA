@@ -35,7 +35,7 @@ constexpr KindRule kRules[kPropKindCount] = {
 };
 
 struct Site {
-  float h, slope, stream, trail, valley, forest, clearing, grove, karst, shrine, moist, alt;
+  float h, slope, stream, trail, valley, forest, clearing, grove, karst, shrine, shrineClear, moist, alt;
 };
 
 float membership(const std::vector<Clearing>& list, Vec2 p, float inner, float outer) {
@@ -62,6 +62,8 @@ Site evaluate(const ScatterContext& ctx, float x, float z) {
   s.grove = membership(L.bambooGroves, p, 0.45f, 1.0f);
   s.karst = membership(L.karstFields, p, 0.3f, 1.0f);
   s.shrine = 1.0f - smoothstep(L.shrineTerraceRadius - 4.0f, L.shrineTerraceRadius + 6.0f, length(p - L.shrine));
+  // Nothing grows on the shrine platform, steps or around the lanterns.
+  s.shrineClear = smoothstep(9.0f, 15.0f, length(p - L.shrine));
   s.moist = 1.0f - smoothstep(4.0f, 55.0f, s.stream);
   s.alt = s.h - L.valleyFloorAt(ctx.fields->valleyParam(x, z));
   return s;
@@ -90,11 +92,11 @@ float densityAt(const Site& s, PropKind k) {
              smoothstep(1.5f, 3.0f, s.trail) * open;
     case PropKind::Fern:
       return (0.12f + 0.5f * s.moist + 0.3f * s.forest) * (1.0f - smoothstep(0.4f, 0.55f, s.slope)) * dry *
-             smoothstep(1.0f, 2.5f, s.trail) * (1.0f - 0.6f * s.clearing) * treeLine * (1.0f - s.shrine);
+             smoothstep(1.0f, 2.5f, s.trail) * (1.0f - 0.6f * s.clearing) * treeLine * (1.0f - 0.5f * s.shrine) * s.shrineClear;
     case PropKind::Rock: {
       const float streamRocks = (1.0f - smoothstep(2.0f, 8.0f, s.stream)) * 0.55f;
       return std::fmin(1.0f, 0.06f + 0.7f * smoothstep(0.15f, 0.55f, s.slope) + streamRocks + 0.25f * s.karst) *
-             smoothstep(0.8f, 2.0f, s.trail) * (1.0f - 0.7f * s.shrine);
+             smoothstep(0.8f, 2.0f, s.trail) * (1.0f - 0.7f * s.shrine) * s.shrineClear;
     }
     case PropKind::Boulder:
       return (0.12f + 0.55f * smoothstep(0.2f, 0.6f, s.slope) + 0.4f * s.karst) * smoothstep(3.0f, 7.0f, s.stream) *
@@ -105,12 +107,12 @@ float densityAt(const Site& s, PropKind k) {
              (1.0f - s.shrine);
     case PropKind::FallenLog:
       return 0.32f * s.forest * (1.0f - smoothstep(0.25f, 0.4f, s.slope)) * dry * trailClear * open *
-             (1.0f - s.grove) * treeLine;
+             (1.0f - s.grove) * treeLine * (1.0f - s.shrine);
     case PropKind::Grass: {
       const float light = 0.55f + 0.45f * (1.0f - s.forest) + 0.4f * s.clearing;
       return std::fmin(1.0f, light) * (1.0f - smoothstep(0.35f, 0.55f, s.slope)) * smoothstep(3.0f, 4.5f, s.stream) *
              smoothstep(0.9f, 2.4f, s.trail) * (1.0f - 0.85f * s.grove) * treeLine *
-             (1.0f - 0.7f * s.shrine);
+             (1.0f - 0.1f * s.shrine) * s.shrineClear;  // the abandoned terrace is overgrown
     }
     case PropKind::Count: break;
   }

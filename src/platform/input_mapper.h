@@ -29,7 +29,7 @@ class InputMapper {
   bool keys_[8] = {};  // W A S D Shift Ctrl Space(held) unused
   Vec2 mouse_{};
   float wheel_ = 0.0f;
-  bool crouch_ = false, jump_ = false, interact_ = false, debug_ = false, pause_ = false;
+  bool crouch_ = false, jump_ = false, interact_ = false, build_ = false, eat_ = false, debug_ = false, pause_ = false;
   bool lastWasPad_ = false;
 };
 

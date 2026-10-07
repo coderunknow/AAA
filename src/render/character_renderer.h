@@ -15,7 +15,10 @@ class CharacterRenderer {
  public:
   ~CharacterRenderer();
   void init(ShaderLibrary& shaders, bgfx::UniformHandle detailSampler, bgfx::TextureHandle detail);
-  void submit(bgfx::ViewId view, const std::array<PartPose, kBodyPartCount>& parts, bool shadow);
+  void submit(bgfx::ViewId view, const PartPose* parts, int count, bool shadow);
+  void submit(bgfx::ViewId view, const std::array<PartPose, kBodyPartCount>& parts, bool shadow) {
+    submit(view, parts.data(), kBodyPartCount, shadow);
+  }
 
  private:
   std::array<GpuMesh, 4> meshes_;  // indexed by PartShape

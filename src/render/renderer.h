@@ -16,6 +16,8 @@ class TerrainRenderer;
 class PropRenderer;
 class CharacterRenderer;
 class WaterRenderer;
+class ObjectRenderer;
+class FireRenderer;
 
 enum class QualityPreset : int { Low = 0, Medium = 1, High = 2 };
 const char* qualityName(QualityPreset q);
@@ -98,6 +100,8 @@ class Renderer {
   std::unique_ptr<PropRenderer> props_;
   std::unique_ptr<CharacterRenderer> character_;
   std::unique_ptr<WaterRenderer> water_;
+  std::unique_ptr<ObjectRenderer> objects_;
+  std::unique_ptr<FireRenderer> fire_;
 
   bgfx::FrameBufferHandle hdrFb_ = BGFX_INVALID_HANDLE, shadowFb_ = BGFX_INVALID_HANDLE;
   bgfx::TextureHandle hdrColor_ = BGFX_INVALID_HANDLE, shadowTex_ = BGFX_INVALID_HANDLE;
@@ -106,7 +110,7 @@ class Renderer {
 
   struct Uniforms {
     bgfx::UniformHandle sunDir, sunColor, skyAmbient, groundAmbient, fogColor, fogParams, camPos, wind, shadowParams,
-        shadowMtx, skyZenith, skyHorizon, invViewProjSky, screenParams, post, grade, sHdr, sShadow;
+        shadowMtx, skyZenith, skyHorizon, fireLight, fireColor, invViewProjSky, screenParams, post, grade, sHdr, sShadow;
   } u_{};
 };
 

@@ -20,7 +20,7 @@ enum class BodyPart : uint8_t {
 constexpr int kBodyPartCount = static_cast<int>(BodyPart::Count);
 
 enum class PartShape : uint8_t { Capsule, Box, Sphere, Cone };
-enum class PartMaterial : uint8_t { Skin, Jacket, Trousers, Leather, Canvas, Straw };
+enum class PartMaterial : uint8_t { Skin, Jacket, Trousers, Leather, Canvas, Straw, Fur, FurDark, Eyes };
 
 struct PartPose {
   Mat4 transform;  // unit primitive -> world (includes scale)

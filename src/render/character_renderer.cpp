@@ -9,6 +9,7 @@ struct MaterialStyle {
   float albedo[3];
   float roughness;
   float weaveFreq, weaveStrength;
+  float emissive = 0.0f;
 };
 // Indexed by PartMaterial. Muted, travel-worn palette (linear albedo).
 const MaterialStyle kMaterials[] = {
@@ -18,7 +19,11 @@ const MaterialStyle kMaterials[] = {
     {{0.12f, 0.07f, 0.04f}, 0.6f, 0.0f, 0.0f},     // Leather
     {{0.25f, 0.21f, 0.15f}, 0.9f, 55.0f, 0.25f},   // Canvas
     {{0.38f, 0.30f, 0.16f}, 0.85f, 120.0f, 0.35f}, // Straw hat
+    {{0.15f, 0.135f, 0.115f}, 0.95f, 160.0f, 0.45f}, // Fur: grizzled grey-brown
+    {{0.06f, 0.052f, 0.045f}, 0.95f, 160.0f, 0.4f},  // Dark fur (saddle, muzzle, legs)
+    {{0.55f, 0.42f, 0.12f}, 0.3f, 0.0f, 0.0f, 2.5f},  // Eyeshine
 };
+static_assert(sizeof(kMaterials) / sizeof(kMaterials[0]) == 9, "one style per PartMaterial");
 }  // namespace
 
 CharacterRenderer::~CharacterRenderer() {
@@ -40,10 +45,11 @@ void CharacterRenderer::init(ShaderLibrary& shaders, bgfx::UniformHandle detailS
   detail_ = detail;
 }
 
-void CharacterRenderer::submit(bgfx::ViewId view, const std::array<PartPose, kBodyPartCount>& parts, bool shadow) {
+void CharacterRenderer::submit(bgfx::ViewId view, const PartPose* parts, int count, bool shadow) {
   const bgfx::ProgramHandle prog = shadow ? shadowProgram_ : program_;
   if (!bgfx::isValid(prog)) return;
-  for (const PartPose& p : parts) {
+  for (int pi = 0; pi < count; ++pi) {
+    const PartPose& p = parts[pi];
     const GpuMesh& mesh = meshes_[static_cast<int>(p.shape)];
     if (!mesh.valid()) continue;
     bgfx::setTransform(p.transform.m);
@@ -54,7 +60,7 @@ void CharacterRenderer::submit(bgfx::ViewId view, const std::array<PartPose, kBo
     } else {
       const MaterialStyle& ms = kMaterials[static_cast<int>(p.material)];
       const float mat[4] = {ms.albedo[0], ms.albedo[1], ms.albedo[2], ms.roughness};
-      const float weave[4] = {ms.weaveFreq, ms.weaveStrength, 0.0f, 0.0f};
+      const float weave[4] = {ms.weaveFreq, ms.weaveStrength, ms.emissive, 0.0f};
       bgfx::setUniform(uMaterial_, mat);
       bgfx::setUniform(uTintA_, weave);
       if (bgfx::isValid(detail_)) bgfx::setTexture(3, sDetail_, detail_);

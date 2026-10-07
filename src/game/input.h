@@ -15,6 +15,8 @@ struct InputFrame {
   bool crouchToggle = false;  // edge
   bool jump = false;          // edge
   bool interact = false;      // edge
+  bool buildFire = false;     // edge
+  bool eat = false;           // edge
   bool toggleDebug = false;   // edge
   bool pause = false;         // edge
   bool pointerLocked = false;

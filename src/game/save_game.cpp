@@ -6,17 +6,19 @@
 #include <cstdlib>
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace aaa {
 namespace {
 
 // --- minimal JSON (objects, numbers, strings, bools, null) -----------------------------------
 struct JValue {
-  enum Type { Null, Bool, Number, String, Object } type = Null;
+  enum Type { Null, Bool, Number, String, Object, Array } type = Null;
   bool b = false;
   double n = 0.0;
   std::string s;
   std::map<std::string, std::shared_ptr<JValue>> obj;
+  std::vector<std::shared_ptr<JValue>> arr;
   const JValue* get(const char* k) const {
     auto it = obj.find(k);
     return it == obj.end() ? nullptr : it->second.get();
@@ -74,6 +76,21 @@ struct Parser {
         ws();
         if (p < end && *p == ',') { ++p; continue; }
         if (p < end && *p == '}') { ++p; break; }
+        return false;
+      }
+    } else if (*p == '[') {
+      v.type = JValue::Array;
+      ++p;
+      ws();
+      if (p < end && *p == ']') { ++p; --depth; return true; }
+      for (;;) {
+        if (v.arr.size() >= 4096) return false;
+        auto child = std::make_shared<JValue>();
+        if (!value(*child)) return false;
+        v.arr.push_back(child);
+        ws();
+        if (p < end && *p == ',') { ++p; continue; }
+        if (p < end && *p == ']') { ++p; break; }
         return false;
       }
     } else if (*p == '"') {
@@ -140,7 +157,37 @@ std::string serializeSave(const SaveData& d) {
   appendNum(s, "quality", d.quality);
   appendNum(s, "mouseSensitivity", d.mouseSensitivity);
   s += std::string("\"invertY\":") + (d.invertY ? "true" : "false");
-  s += "}}";
+  s += "},\"survival\":{";
+  appendNum(s, "day", d.day);
+  appendNum(s, "health", d.vitals.health);
+  appendNum(s, "warmth", d.vitals.warmth);
+  appendNum(s, "satiety", d.vitals.satiety);
+  appendNum(s, "hydration", d.vitals.hydration);
+  appendNum(s, "wetness", d.vitals.wetness);
+  s += "\"inventory\":[";
+  for (int i = 0; i < 4; ++i) s += std::to_string(d.inventory[i]) + (i < 3 ? "," : "");
+  s += "],";
+  if (d.hasRestPoint) {
+    s += "\"rest\":{";
+    appendNum(s, "x", d.restPoint.x);
+    appendNum(s, "y", d.restPoint.y);
+    appendNum(s, "z", d.restPoint.z, false);
+    s += "},";
+  }
+  s += "\"picked\":[";
+  for (size_t i = 0; i < d.picked.size(); ++i) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%s[%u,%.6g]", i ? "," : "", static_cast<unsigned>(d.picked[i].id), d.picked[i].regrowAt);
+    s += buf;
+  }
+  s += "],\"fires\":[";
+  for (size_t i = 0; i < d.fires.size(); ++i) {
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "%s[%.6g,%.6g,%.6g,%.6g]", i ? "," : "", d.fires[i].pos.x, d.fires[i].pos.y,
+                  d.fires[i].pos.z, d.fires[i].fuel);
+    s += buf;
+  }
+  s += "]}}";
   return s;
 }
 
@@ -168,7 +215,7 @@ SaveLoadResult deserializeSave(const std::string& text, uint32_t expectedSeed, S
     d.playerYaw = static_cast<float>(yaw);
     d.hours = static_cast<float>(dayFraction * 24.0);
     migrated = true;
-  } else if (version == 2) {
+  } else if (version == 2 || version == 3) {
     const JValue* fmt = root.get("format");
     if (!fmt || fmt->type != JValue::String || fmt->s != "mistpine-save") return SaveLoadResult::Corrupt;
     const JValue* w = root.get("world");
@@ -188,6 +235,51 @@ SaveLoadResult deserializeSave(const std::string& text, uint32_t expectedSeed, S
     if (num(st, "mouseSensitivity", ms)) d.mouseSensitivity = static_cast<float>(ms);
     if (st)
       if (const JValue* inv = st->get("invertY"); inv && inv->type == JValue::Bool) d.invertY = inv->b;
+    if (version == 2) {
+      migrated = true;  // v2 -> v3: survival state starts fresh (defaults)
+    } else {
+      const JValue* sv = root.get("survival");
+      double day, hp, wa, sa, hy, we;
+      if (!num(sv, "day", day) || !num(sv, "health", hp) || !num(sv, "warmth", wa) || !num(sv, "satiety", sa) ||
+          !num(sv, "hydration", hy) || !num(sv, "wetness", we))
+        return SaveLoadResult::Corrupt;
+      d.day = static_cast<int>(day);
+      d.vitals = {static_cast<float>(hp), static_cast<float>(wa), static_cast<float>(sa), static_cast<float>(hy),
+                  static_cast<float>(we)};
+      const JValue* inv = sv->get("inventory");
+      if (!inv || inv->type != JValue::Array || inv->arr.size() != 4) return SaveLoadResult::Corrupt;
+      for (int i = 0; i < 4; ++i) {
+        if (inv->arr[i]->type != JValue::Number) return SaveLoadResult::Corrupt;
+        d.inventory[i] = static_cast<int>(inv->arr[i]->n);
+      }
+      if (const JValue* r = sv->get("rest")) {
+        double rx, ry, rz;
+        if (!num(r, "x", rx) || !num(r, "y", ry) || !num(r, "z", rz)) return SaveLoadResult::Corrupt;
+        d.hasRestPoint = true;
+        d.restPoint = {static_cast<float>(rx), static_cast<float>(ry), static_cast<float>(rz)};
+      }
+      const JValue* pk = sv->get("picked");
+      const JValue* fr = sv->get("fires");
+      if (!pk || pk->type != JValue::Array || !fr || fr->type != JValue::Array) return SaveLoadResult::Corrupt;
+      if (pk->arr.size() > SaveData::kMaxPicked || fr->arr.size() > SaveData::kMaxFires) return SaveLoadResult::Invalid;
+      for (const auto& e : pk->arr) {
+        if (e->type != JValue::Array || e->arr.size() != 2 || e->arr[0]->type != JValue::Number ||
+            e->arr[1]->type != JValue::Number)
+          return SaveLoadResult::Corrupt;
+        const double id = e->arr[0]->n, at = e->arr[1]->n;
+        if (!(id >= 1 && id <= 65535) || !(at >= 0.0) || !std::isfinite(at)) return SaveLoadResult::Invalid;
+        d.picked.push_back({static_cast<uint16_t>(id), at});
+      }
+      for (const auto& e : fr->arr) {
+        if (e->type != JValue::Array || e->arr.size() != 4) return SaveLoadResult::Corrupt;
+        float v[4];
+        for (int i = 0; i < 4; ++i) {
+          if (e->arr[i]->type != JValue::Number || !std::isfinite(e->arr[i]->n)) return SaveLoadResult::Corrupt;
+          v[i] = static_cast<float>(e->arr[i]->n);
+        }
+        d.fires.push_back({{v[0], v[1], v[2]}, v[3]});
+      }
+    }
   } else {
     return SaveLoadResult::UnsupportedVersion;
   }
@@ -198,6 +290,16 @@ SaveLoadResult deserializeSave(const std::string& text, uint32_t expectedSeed, S
                   d.playerPos.y > -50.0f && d.playerPos.y < 1000.0f && std::isfinite(d.playerYaw) &&
                   d.hours >= 0.0f && d.hours < 24.0f && d.playSeconds >= 0.0 && d.quality >= 0 && d.quality <= 2 &&
                   d.mouseSensitivity > 0.05f && d.mouseSensitivity < 10.0f;
+  bool survivalOk = d.day >= 1 && d.day <= 100000;
+  auto pct = [](float v) { return std::isfinite(v) && v >= 0.0f && v <= 100.0f; };
+  survivalOk = survivalOk && pct(d.vitals.health) && pct(d.vitals.warmth) && pct(d.vitals.satiety) &&
+               pct(d.vitals.hydration) && std::isfinite(d.vitals.wetness) && d.vitals.wetness >= 0.0f &&
+               d.vitals.wetness <= 1.0f;
+  for (int i = 0; i < 4; ++i) survivalOk = survivalOk && d.inventory[i] >= 0 && d.inventory[i] <= 64;
+  auto inWorld = [](Vec3 p) { return std::fabs(p.x) <= 512.0f && std::fabs(p.z) <= 512.0f && p.y > -50.0f && p.y < 1000.0f; };
+  if (d.hasRestPoint) survivalOk = survivalOk && inWorld(d.restPoint);
+  for (const SavedFire& f : d.fires) survivalOk = survivalOk && inWorld(f.pos) && f.fuel >= 0.0f && f.fuel <= 3600.0f;
+  if (!survivalOk) return SaveLoadResult::Invalid;
   if (!ok) return SaveLoadResult::Invalid;
   out = d;
   return migrated ? SaveLoadResult::Migrated : SaveLoadResult::Ok;

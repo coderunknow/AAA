@@ -13,7 +13,7 @@ float shadowCascade(vec3 _wpos, int _cascade) {
 }
 
 // Returns 1 = fully lit, 0 = fully shadowed. Blends between cascades near the split.
-float sunShadow(vec3 _wpos, vec3 _n) {
+float sunShadowRaw(vec3 _wpos, vec3 _n) {
   if (u_shadowParams.z < 0.5) return 1.0;
   float dist = length(_wpos - u_camPos.xyz);
   // Normal offset reduces acne on slopes facing away from the sun.
@@ -25,3 +25,15 @@ float sunShadow(vec3 _wpos, vec3 _n) {
   float s = shadowCascade(p + _n * 0.25, 1);
   return mix(s, 1.0, smoothstep(farRange * 0.8, farRange, dist));
 }
+
+// At night a nearby campfire dominates: lift the moon's shadows in proportion to firelight so a
+// moon shadow does not cut a hard dark-red hole into the warm pool of light.
+float sunShadow(vec3 _wpos, vec3 _n) {
+  float sh = sunShadowRaw(_wpos, _n);
+  vec3 d = u_fireLight.xyz - _wpos;
+  float dist = length(d);
+  float att = (1.0 / (1.0 + dist * dist * 0.45)) * (1.0 - smoothstep(u_fireLight.w * 0.55, u_fireLight.w, dist));
+  float fire = saturate1(att * dot(u_fireColor.rgb, vec3_splat(0.333)) * 1.5);
+  return mix(sh, 1.0, fire * (1.0 - u_sunDir.w));
+}
+

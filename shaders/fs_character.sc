@@ -6,7 +6,7 @@ $input v_wpos, v_normal, v_texcoord0, v_color0
 
 SAMPLER2D(s_detail, 3);
 uniform vec4 u_material;  // rgb: albedo, w: roughness
-uniform vec4 u_tintA;     // x: weave frequency, y: weave strength
+uniform vec4 u_tintA;     // x: weave frequency, y: weave strength, z: emissive
 
 void main() {
   vec3 n = normalize(v_normal);
@@ -17,5 +17,6 @@ void main() {
   float rim = pow(1.0 - saturate1(dot(n, v)), 3.0) * 0.35;
   float sh = sunShadow(v_wpos, n);
   vec3 color = shadeSurface(albedo, n, v, u_material.w, 1.0, sh) + u_skyAmbient.rgb * rim * albedo * 2.0;
+  color += localLight(albedo, n, v_wpos) + albedo * u_tintA.z;
   gl_FragColor = vec4(applyFog(color, v_wpos), 1.0);
 }

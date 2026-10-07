@@ -91,3 +91,27 @@ Verified results (this sandbox: 2 CPU cores, no GPU):
 - CONTRADICTION found & fixed: identical "still" playtests produced different camera framing (run5 vs run6). Cause (inferred, consistent with known Chrome behaviour): a spurious large mouse movement around the pointer-lock request on click. Fix: drop single motion events >300 px and ignore look deltas for 3 frames after any pointer-lock state change. Verified: run7 full scripted playtest gives the stable over-shoulder framing.
 - Unit tests: 27/27 pass.
 - Known visual gaps (not yet addressed): grass cards still too saturated/yellow-lime at close range; character is a blocky stand-in; pine crowns read as flat cards from below; distant mountains pale/flat.
+
+### #7 — 2026-10-07 — INTENT
+User: "Now build the finish version." / "Create PR and merge after you have finished."
+Scope for the finished vertical slice (derived from the master prompt + #3 answers; no new features beyond them):
+- Survival loop: warmth (night cold, wet from wading), hunger, thirst, health; fall damage; collapse → wake at last rest point (no hard game over).
+- Interaction: forage berries/mushrooms, gather dry branches + flint, drink from the stream, build a campfire, rest at the shrine (save point).
+- Shrine landmark (original design) on the terrace; campfire with flame VFX and a local fire light.
+- Avoidable predators: wolves that roam/stalk at night, are scared off by fire and avoid the shrine; a bite hurts, no combat.
+- Procedural audio (C++ synth via SDL3 audio): wind, stream, birds by day, insects by night, fire crackle, footsteps, distant howls.
+- HUD (DOM, thin): vitals, inventory, prompts, notifications; debug overlay only with ?debug=1.
+- Save v3 hooked in (autosave, rest, pause) with v1/v2 → v3 migration.
+- scripts/build.sh, README, GitHub Actions (official emsdk 4.0.11) + Pages; final report.
+NOTE: sandbox was recycled since #6 — local branch had been reset to 77790df with files untracked; verified working tree == origin dd5e6df, re-pointed branch (git reset to origin, no file changes). Toolchain/deps/build dirs had to be rebuilt.
+
+## #8 — 2026-10-07 — DONE: finished vertical slice (scope of #7)
+Verified in this sandbox (2 CPU cores, no GPU; browser = headless Chromium 153, SwiftShader software WebGL2, bgfx OpenGL ES 3.0 backend):
+- Implemented: shrine landmark (`src/world/shrine.*`, `procgen/structure_meshes.*`); survival (warmth/wetness/food/water/health, fall damage, collapse → wake at last rest); interactables (branches, flint, berries, mushrooms with regrowth; drink; campfire build/feed/burn-out); wolves (roam/stalk/flee fire, avoid shrine, bite; rigid-part pose); fire VFX + flickering local fire light; procedural audio (`src/audio/soundscape.*`) on an SDL3 audio stream (`platform/audio_output.*`); app wiring (title/continue screen, pause, autosave 45 s/pause/focus-loss/rest, event → sfx + notifications, HUD feed); DOM HUD; debug overlay gated behind ?debug=1; QA scenarios ?qa=camp|shrine|wolves; save v3 hooked in.
+- Unit tests: **42/42 pass** (`build/unit`), incl. test_survival (gather → fire → warm → save end-to-end) and test_audio.
+- `native-headless`: built with no warnings from project sources; `ctest`: **4/4 pass** (unit + smoke_day, smoke_night_camp, smoke_wolves; Noop renderer = logic only).
+- `web-release`: built (wasm 1.8 MB, js 0.22 MB, data 64 KB). Playtests run8–run12: ready in 3.4–5.0 s, **0 console errors**; visually inspected title, day, night campfire, shrine, night wolf (curated copies in `docs/qa/2026-10-07-final-*.png`).
+- Save round trip verified in the browser (run12, `--script persist`): pause → localStorage 394 B v3 JSON → reload → title shows "Continue" → "restored from save".
+- Polish fixes found by visual QA: (1) title showed blank fog — camera was not updated while paused → camera/animator now update during pause; (2) moon shadow cut a dark-red hole into firelight → shadows lifted by firelight × (1−daylight); (3) moonlit grass read neon green → scotopic desaturation in tonemap below ~0.1 luminance; (4) shrine terrace bare → overgrown grass/ferns; (5) HUD legibility (soft backdrops, brighter clock).
+- NOT verified: audio has not been listened to by a human (unit-tested + device opens); native windowed build (CI only); any real-GPU performance (~0.76–1 rAF/s under SwiftShader, not representative); GitHub Pages deployment (needs Pages enabled).
+- Added: README.md, docs/ASSETS.md (all assets generated in code; no AI/CC0 assets were used), scripts/build.sh, .github/workflows/ci.yml (official emsdk 4.0.11).

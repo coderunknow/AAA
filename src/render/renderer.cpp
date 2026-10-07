@@ -15,6 +15,8 @@
 #include "render/shader_library.h"
 #include "render/terrain_renderer.h"
 #include "render/water_renderer.h"
+#include "render/object_renderer.h"
+#include "game/wolf_pose.h"
 
 namespace aaa {
 namespace {
@@ -96,6 +98,8 @@ bool Renderer::init(const RendererInit& in) {
   props_ = std::make_unique<PropRenderer>();
   character_ = std::make_unique<CharacterRenderer>();
   water_ = std::make_unique<WaterRenderer>();
+  objects_ = std::make_unique<ObjectRenderer>();
+  fire_ = std::make_unique<FireRenderer>();
 
   auto U = [](const char* n, bgfx::UniformType::Enum t = bgfx::UniformType::Vec4, uint16_t num = 1) {
     return bgfx::createUniform(n, t, num);
@@ -112,6 +116,8 @@ bool Renderer::init(const RendererInit& in) {
   u_.shadowMtx = U("u_shadowMtx", bgfx::UniformType::Mat4, 2);
   u_.skyZenith = U("u_skyZenith");
   u_.skyHorizon = U("u_skyHorizon");
+  u_.fireLight = U("u_fireLight");
+  u_.fireColor = U("u_fireColor");
   u_.invViewProjSky = U("u_invViewProjSky", bgfx::UniformType::Mat4);
   u_.screenParams = U("u_screenParams");
   u_.post = U("u_post");
@@ -135,6 +141,8 @@ bool Renderer::init(const RendererInit& in) {
 void Renderer::shutdown() {
   if (!initialised_) return;
   water_.reset();
+  objects_.reset();
+  fire_.reset();
   character_.reset();
   props_.reset();
   terrain_.reset();
@@ -231,6 +239,8 @@ bool Renderer::loadStep(const Game& game, double budgetMs) {
         terrain_->bindDetail(props_->detailSampler(), props_->detailTexture());
         character_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
         water_->init(game.world(), *shaders_, props_->detailSampler(), props_->detailTexture());
+        objects_->init(*shaders_, props_->detailSampler(), props_->detailTexture(), game.world());
+        fire_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
         loadStage_ = 3;
         AAA_LOG_INFO("renderer ready: %d prop meshes, %d shaders, GPU memory ~%.1f MB meshes, %.1f MB textures",
                      props_->meshCount(), shaders_->loadedShaderCount(),
@@ -271,6 +281,25 @@ void Renderer::setFrameUniforms(const Game& game, const float* shadowMtx) {
   bgfx::setUniform(u_.shadowMtx, shadowMtx, 2);
   bgfx::setUniform(u_.skyZenith, zen);
   bgfx::setUniform(u_.skyHorizon, hor);
+
+  // Nearest burning campfire to the camera drives the local light (flicker from layered sines).
+  float fl[4] = {0.0f, -1000.0f, 0.0f, 0.0f}, fcol[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  float bestD = 60.0f;
+  int idx = 0;
+  for (const Campfire& f : game.campfires()) {
+    ++idx;
+    if (!f.burning()) continue;
+    const float d = length(f.pos - cv.eye);
+    if (d >= bestD) continue;
+    bestD = d;
+    const float I = f.intensity();
+    const float flick = 0.82f + 0.1f * std::sin(time_ * 11.0f + idx) + 0.08f * std::sin(time_ * 23.0f + idx * 2.3f);
+    fl[0] = f.pos.x; fl[1] = f.pos.y + 0.7f; fl[2] = f.pos.z; fl[3] = 4.0f + 12.0f * I;
+    const float k = 6.0f * I * flick;
+    fcol[0] = 1.0f * k; fcol[1] = 0.42f * k; fcol[2] = 0.13f * k;
+  }
+  bgfx::setUniform(u_.fireLight, fl);
+  bgfx::setUniform(u_.fireColor, fcol);
 }
 
 void Renderer::render(const Game& game, float realDt) {
@@ -352,6 +381,17 @@ void Renderer::render(const Game& game, float realDt) {
       terrain_->submitShadow(vid, center, radius, c == 0 ? 0 : 2, game.world());
       props_->submitShadow(vid, game.world(), center, radius, c == 0 ? 1 : 2, c == 1);
       character_->submit(vid, game.animator().parts(), true);
+      if (game.phase() != GamePhase::LoadingWorld) {
+        objects_->submit(vid, game, center, nullptr, true, time_);
+        if (c == 0) {
+          WolfPose pose;
+          for (const Wolf& w : game.wildlife().wolves()) {
+            if (length(w.pos - center) > radius) continue;
+            buildWolfPose(w, time_, pose);
+            character_->submit(vid, pose.data(), kWolfPartCount, true);
+          }
+        }
+      }
     }
   } else {
     setFrameUniforms(game, shadowMtx);
@@ -370,6 +410,15 @@ void Renderer::render(const Game& game, float realDt) {
   terrain_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.terrainLod, 0);
   props_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.propDistance, settings_.grassDensity);
   if (game.phase() != GamePhase::LoadingWorld) character_->submit(kViewScene, game.animator().parts(), false);
+  if (game.phase() != GamePhase::LoadingWorld) {
+    objects_->submit(kViewScene, game, cv.eye, &frustum, false, time_);
+    WolfPose pose;
+    for (const Wolf& w : game.wildlife().wolves()) {
+      if (lengthSq(w.pos - cv.eye) > 160.0f * 160.0f || !frustum.sphereVisible(w.pos + Vec3{0, 0.5f, 0}, 1.2f)) continue;
+      buildWolfPose(w, time_, pose);
+      character_->submit(kViewScene, pose.data(), kWolfPartCount, false);
+    }
+  }
   water_->submit(kViewScene, frustum);  // translucent: after opaque geometry
 
   // Sky last (depth test against the far plane only).
@@ -388,13 +437,17 @@ void Renderer::render(const Game& game, float realDt) {
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_DEPTH_TEST_LEQUAL);
     if (bgfx::isValid(skyProg_)) bgfx::submit(kViewScene, skyProg_);
   }
+  // Additive flames after the sky (they write no depth, so the sky would overwrite them).
+  if (game.phase() != GamePhase::LoadingWorld) fire_->submit(kViewScene, game, cv.eye, frustum);
 
   // --- post: tonemap to the backbuffer -------------------------------------------------------
   bgfx::setViewFrameBuffer(kViewPost, BGFX_INVALID_HANDLE);
   bgfx::setViewRect(kViewPost, 0, 0, static_cast<uint16_t>(width_), static_cast<uint16_t>(height_));
   bgfx::setViewClear(kViewPost, BGFX_CLEAR_COLOR, 0x000000ff, 1.0f, 0);
   {
-    const float post[4] = {atm_.exposure, 1.06f, 0.28f, 1.06f};
+    // Rest / collapse transitions fade the exposure to black.
+    const float fade = 1.0f - game.screenFade();
+    const float post[4] = {atm_.exposure * fade * fade, 1.06f, 0.28f, 1.06f};
     const float grade[4] = {atm_.gradeHighlights.x, atm_.gradeHighlights.y, atm_.gradeHighlights.z, 0.12f};
     const float screen[4] = {originBL ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
     bgfx::setUniform(u_.post, post);

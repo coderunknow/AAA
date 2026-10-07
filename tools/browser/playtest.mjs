@@ -85,7 +85,9 @@ try {
   if (error) throw new Error('game reported error: ' + error);
   summary.readySeconds = (Date.now() - t0) / 1000;
   await sleep(2500);  // let the overlay fade and streaming settle
+  await shot('00-title');
   await page.click('#canvas').catch(() => {});
+  await sleep(1500);  // menu veil fades, HUD fades in
   if (script === 'default') {
     await shot('01-spawn');
     summary.rafFpsIdle = await measureFps(3000);
@@ -102,6 +104,25 @@ try {
     await sleep(1500);
     await shot('05-debug-overlay');
     await press('F3');
+  } else if (script === 'persist') {
+    // Save round trip through real browser localStorage: play, pause (saves), reload, continue.
+    await hold(['KeyW'], 3000);
+    await press('Escape');
+    await sleep(2500);
+    await shot('01-paused');
+    const save = await page.evaluate(() => localStorage.getItem('mistpine-save'));
+    summary.saveBytes = save ? save.length : 0;
+    summary.saveHead = save ? save.slice(0, 120) : null;
+    if (!save) throw new Error('no save in localStorage after pausing');
+    await page.goto(summary.url.replace(/[?&]new=1/, (m) => m[0] === '?' ? '?' : ''), { waitUntil: 'load' });  // reload without ?new=1
+    await page.waitForFunction(() => window.__mistpineReady === true, { timeout: readyTimeout, polling: 500 });
+    await sleep(2500);
+    summary.titleButton = await page.evaluate(() => document.getElementById('begin').textContent);
+    await shot('02-continue-title');
+    if (summary.titleButton !== 'Continue') throw new Error('title does not offer Continue: ' + summary.titleButton);
+    await page.click('#begin');
+    await sleep(2500);
+    await shot('03-resumed');
   } else if (script === 'still') {
     await sleep(1500);
     await shot('01-still');

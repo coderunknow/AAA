@@ -105,6 +105,7 @@ void PlayerController::update(float dt, Vec2 wish, bool sprint, bool walk, bool 
     vel_.y = 0.0f;
   } else if (pos_.y <= ground) {
     landingImpact_ = clampf(-vel_.y / 9.0f, 0.0f, 1.0f);
+    landingSpeed_ = -vel_.y;
     pos_.y = ground;
     vel_.y = 0.0f;
     grounded_ = true;

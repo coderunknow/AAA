@@ -44,6 +44,9 @@ class PlayerController {
   float waterDepth() const { return waterDepth_; }
   float turnRate() const { return turnRate_; }
   float landingImpact() const { return landingImpact_; }  // decays after a landing
+  // Vertical speed (m/s) of the most recent landing; returns it once, then 0.
+  float consumeLandingSpeed() { const float v = landingSpeed_; landingSpeed_ = 0.0f; return v; }
+  void setYaw(float yaw) { yaw_ = yaw; }
   Locomotion locomotion() const { return loco_; }
   float distanceTravelled() const { return distance_; }
   const PlayerTuning& tuning() const { return tuning_; }
@@ -62,6 +65,7 @@ class PlayerController {
   float stamina_ = 100.0f;
   float waterDepth_ = 0.0f;
   float landingImpact_ = 0.0f;
+  float landingSpeed_ = 0.0f;
   float distance_ = 0.0f;
   Locomotion loco_ = Locomotion::Idle;
 };

@@ -25,6 +25,6 @@ void main() {
   vec3 albedo = texel.rgb * tint;
   float ao = v_color0.r;
   float sh = sunShadow(wpos, normalize(v_normal));
-  vec3 color = shadeFoliage(albedo, n, v, ao, sh * (0.35 + 0.65 * ao), u_material.z);
+  vec3 color = shadeFoliage(albedo, n, v, ao, sh * (0.35 + 0.65 * ao), u_material.z) + localLight(albedo, n, wpos) * ao;
   gl_FragColor = vec4(applyFog(color, wpos), 1.0);
 }

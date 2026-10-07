@@ -7,5 +7,8 @@ void reportReady();
 void reportError(const char* message);
 void reportPause(bool paused);  // shows / hides the HTML pause hint
 void reportPrompt(const char* text);  // contextual interaction prompt ("" hides it)
+void reportStart(bool hasSave);       // world loaded: show the title / continue screen
+void reportHud(const char* json);     // vitals, inventory, clock (a few times per second)
+void notify(const char* text);        // short narrative notification
 
 }  // namespace aaa::web

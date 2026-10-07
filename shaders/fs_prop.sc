@@ -62,6 +62,6 @@ void main() {
   }
 
   float sh = sunShadow(wpos, n);
-  vec3 color = shadeSurface(albedo, n, v, roughness, ao, sh);
+  vec3 color = shadeSurface(albedo, n, v, roughness, ao, sh) + localLight(albedo, n, wpos) * ao;
   gl_FragColor = vec4(applyFog(color, wpos), 1.0);
 }

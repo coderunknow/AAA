@@ -33,6 +33,10 @@ else()
   set(AAA_PLATFORM_WEB OFF)
 endif()
 
+if(AAA_BUILD_TESTS AND NOT AAA_PLATFORM_WEB)
+  enable_testing()  # before any add_subdirectory so app smoke tests register too
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Core, platform-independent code (world generation, gameplay, procedural assets)
@@ -42,6 +46,7 @@ add_subdirectory(src/core)
 add_subdirectory(src/world)
 add_subdirectory(src/game)
 add_subdirectory(src/procgen)
+add_subdirectory(src/audio)
 
 if(AAA_BUILD_GAME OR AAA_BUILD_TOOLS)
   include(Dependencies)
@@ -55,6 +60,5 @@ if(AAA_BUILD_GAME)
 endif()
 
 if(AAA_BUILD_TESTS AND NOT AAA_PLATFORM_WEB)
-  enable_testing()
   add_subdirectory(tests)
 endif()

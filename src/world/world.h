@@ -1,5 +1,6 @@
 #pragma once
 // World: terrain + layout + chunked, lazily generated scatter data.
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -7,6 +8,7 @@
 
 #include "world/heightfield.h"
 #include "world/scatter.h"
+#include "world/shrine.h"
 #include "world/terrain_generator.h"
 #include "world/world_layout.h"
 
@@ -51,7 +53,15 @@ class World {
   int detailChunkCount() const;
   int generatedChunkCount() const;
 
-  float groundHeight(float x, float z) const { return hf_.height(x, z); }
+  // Standable ground: terrain, or a built surface (shrine platform/steps) where higher.
+  float groundHeight(float x, float z) const {
+    const float h = hf_.height(x, z);
+    return ready_ ? std::fmax(h, shrine_.surfaceHeight(x, z)) : h;
+  }
+  float terrainHeight(float x, float z) const { return hf_.height(x, z); }
+  const ShrineLayout& shrine() const { return shrine_; }
+  // Approximate terrain slope (0 flat .. 1 vertical) from the heightfield normal.
+  float slope(float x, float z) const;
   // Water depth of the stream at (x,z); 0 when dry.
   float waterDepth(float x, float z) const;
   float waterSurface(float x, float z) const;
@@ -62,6 +72,7 @@ class World {
   void generateChunk(WorldChunk& c);
 
   WorldLayout layout_;
+  ShrineLayout shrine_;
   std::unique_ptr<TerrainGenerator> generator_;
   Heightfield hf_;
   WorldFields fields_;
