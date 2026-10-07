@@ -1,0 +1,10 @@
+{
+  "name": "aaa-browser-qa",
+  "private": true,
+  "description": "Headless Chromium harness for automated browser QA of the WebAssembly build (screenshots, console capture, scripted input).",
+  "type": "module",
+  "dependencies": {
+    "@sparticuz/chromium": "153.0.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}

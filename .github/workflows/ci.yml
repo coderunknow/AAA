@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  EMSDK_VERSION: 4.0.11   # same Emscripten release the sandbox toolchain was paired with
+
+jobs:
+  tools:
+    name: Host tools (bgfx shaderc)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+          key: shaderc-${{ hashFiles('cmake/Dependencies.cmake') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cmake --preset tools
+          cmake --build --preset tools --target shaderc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+
+  native:
+    name: Unit tests + headless smoke runs
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/download-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
+      - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+      - run: cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON
+      - run: cmake --build --preset native-headless
+      - run: ctest --preset native-headless
+
+  native-windowed:
+    name: Native windowed build (compile + link)
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libgl-dev libasound2-dev libpulse-dev
+      - uses: actions/download-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
+      - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+      - run: cmake --preset native-dev -DAAA_BUILD_TESTS=OFF
+      - run: cmake --build --preset native-dev
+
+  web:
+    name: WebAssembly release
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
+      - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+      - run: EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release
+      - run: cmake --build --preset web-release
+      - name: Collect site
+        run: |
+          mkdir -p site
+          cp build/web-release/src/app/index.{html,js,wasm,data} site/
+          ls -la site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mistpine-web
+          path: site
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  pages:
+    name: Deploy to GitHub Pages
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: web
+    runs-on: ubuntu-24.04
+    # Pages must be enabled (Settings -> Pages -> Source: GitHub Actions); otherwise this job
+    # fails without affecting the build result.
+    continue-on-error: true
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
