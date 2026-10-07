@@ -43,13 +43,13 @@ void main() {
   float grass = mask.a;
 
   // Layer albedos (linear).
-  vec3 moss = mix(vec3(0.055, 0.085, 0.028), vec3(0.11, 0.15, 0.045), dMed.r);
-  vec3 grassC = mix(vec3(0.085, 0.115, 0.035), vec3(0.17, 0.18, 0.07), dLarge.a);
-  vec3 litterC = mix(vec3(0.10, 0.065, 0.035), vec3(0.19, 0.12, 0.06), dMed.b);
-  vec3 dirt = mix(vec3(0.13, 0.095, 0.06), vec3(0.22, 0.17, 0.11), dFine.r);
+  vec3 moss = mix(vec3(0.035, 0.06, 0.022), vec3(0.075, 0.11, 0.035), dMed.r);
+  vec3 grassC = mix(vec3(0.05, 0.08, 0.026), vec3(0.10, 0.125, 0.045), dLarge.a);
+  vec3 litterC = mix(vec3(0.075, 0.045, 0.025), vec3(0.15, 0.085, 0.045), dMed.b);  // rust-brown pine needles
+  vec3 dirt = mix(vec3(0.085, 0.065, 0.045), vec3(0.16, 0.125, 0.085), dFine.r);  // packed earth path
   vec3 mud = vec3(0.05, 0.04, 0.03);
   vec3 tri = triplanarDetail(wpos, n, 1.0 / 5.0);
-  vec3 rock = mix(vec3(0.20, 0.20, 0.19), vec3(0.42, 0.41, 0.38), tri.r) * (1.0 - 0.5 * tri.g);
+  vec3 rock = mix(vec3(0.14, 0.14, 0.135), vec3(0.30, 0.29, 0.27), tri.r) * (1.0 - 0.5 * tri.g);
   rock = mix(rock, vec3(0.09, 0.11, 0.05), smoothstep(0.55, 0.75, tri.b) * 0.5);  // lichen
 
   vec3 albedo = mix(moss, grassC, saturate1(grass * 1.2 + (macro - 0.5) * 0.6));

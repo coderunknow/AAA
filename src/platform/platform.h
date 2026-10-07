@@ -38,6 +38,8 @@ class Platform {
   bool resized_ = false;
   bool focused_ = true;
   bool wantLock_ = false;
+  bool wasLocked_ = false;
+  int lookSettleFrames_ = 0;  // ignore look input briefly after pointer-lock changes
   InputMapper input_;
 };
 

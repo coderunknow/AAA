@@ -111,6 +111,14 @@ bool Platform::handleEvent(const SDL_Event& e) {
 InputFrame Platform::takeInput() {
   InputFrame f = input_.take();
   f.pointerLocked = pointerLocked();
+  if (f.pointerLocked != wasLocked_) {
+    wasLocked_ = f.pointerLocked;
+    lookSettleFrames_ = 3;
+  }
+  if (lookSettleFrames_ > 0) {
+    --lookSettleFrames_;
+    f.lookDelta = {};
+  }
   return f;
 }
 

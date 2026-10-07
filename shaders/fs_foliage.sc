@@ -12,6 +12,10 @@ uniform vec4 u_tintB;
 void main() {
   vec4 texel = texture2D(s_foliage, v_texcoord0);
   if (texel.a < u_material.y) discard;
+  // Dithered fade for cards right in front of the camera (avoids screen-filling blades).
+  float camDist = length(v_wpos - u_camPos.xyz);
+  float dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  if (dither > smoothstep(0.6, 2.2, camDist)) discard;
   vec3 wpos = v_wpos;
   vec3 n = normalize(v_normal);
   vec3 v = normalize(u_camPos.xyz - wpos);

@@ -52,6 +52,9 @@ void InputMapper::handleEvent(const SDL_Event& e) {
       break;
     }
     case SDL_EVENT_MOUSE_MOTION:
+      // Browsers can report one huge movementX/Y around pointer-lock transitions; a single
+      // event this large is never a real hand movement, so drop it instead of spinning the camera.
+      if (std::fabs(e.motion.xrel) > 300.0f || std::fabs(e.motion.yrel) > 300.0f) break;
       mouse_.x += e.motion.xrel;
       mouse_.y += e.motion.yrel;
       lastWasPad_ = false;

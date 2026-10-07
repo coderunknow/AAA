@@ -31,7 +31,7 @@ constexpr KindRule kRules[kPropKindCount] = {
     {19.0f, 0.8f, 1.8f},   // Boulder
     {24.0f, 0.7f, 1.5f},   // KarstSpire
     {21.0f, 0.8f, 1.2f},   // FallenLog
-    {0.85f, 0.6f, 1.3f},   // Grass
+    {0.62f, 0.55f, 1.35f},  // Grass
 };
 
 struct Site {
@@ -109,7 +109,7 @@ float densityAt(const Site& s, PropKind k) {
     case PropKind::Grass: {
       const float light = 0.55f + 0.45f * (1.0f - s.forest) + 0.4f * s.clearing;
       return std::fmin(1.0f, light) * (1.0f - smoothstep(0.35f, 0.55f, s.slope)) * smoothstep(3.0f, 4.5f, s.stream) *
-             (0.35f + 0.65f * smoothstep(0.5f, 1.6f, s.trail)) * (1.0f - 0.85f * s.grove) * treeLine *
+             smoothstep(0.9f, 2.4f, s.trail) * (1.0f - 0.85f * s.grove) * treeLine *
              (1.0f - 0.7f * s.shrine);
     }
     case PropKind::Count: break;

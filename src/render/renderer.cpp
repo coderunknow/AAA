@@ -14,6 +14,7 @@
 #include "render/prop_renderer.h"
 #include "render/shader_library.h"
 #include "render/terrain_renderer.h"
+#include "render/water_renderer.h"
 
 namespace aaa {
 namespace {
@@ -94,6 +95,7 @@ bool Renderer::init(const RendererInit& in) {
   terrain_ = std::make_unique<TerrainRenderer>();
   props_ = std::make_unique<PropRenderer>();
   character_ = std::make_unique<CharacterRenderer>();
+  water_ = std::make_unique<WaterRenderer>();
 
   auto U = [](const char* n, bgfx::UniformType::Enum t = bgfx::UniformType::Vec4, uint16_t num = 1) {
     return bgfx::createUniform(n, t, num);
@@ -132,6 +134,7 @@ bool Renderer::init(const RendererInit& in) {
 
 void Renderer::shutdown() {
   if (!initialised_) return;
+  water_.reset();
   character_.reset();
   props_.reset();
   terrain_.reset();
@@ -227,6 +230,7 @@ bool Renderer::loadStep(const Game& game, double budgetMs) {
       if (props_->initStep(*shaders_, budgetMs, settings_.textureQuality)) {
         terrain_->bindDetail(props_->detailSampler(), props_->detailTexture());
         character_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
+        water_->init(game.world(), *shaders_, props_->detailSampler(), props_->detailTexture());
         loadStage_ = 3;
         AAA_LOG_INFO("renderer ready: %d prop meshes, %d shaders, GPU memory ~%.1f MB meshes, %.1f MB textures",
                      props_->meshCount(), shaders_->loadedShaderCount(),
@@ -366,6 +370,7 @@ void Renderer::render(const Game& game, float realDt) {
   terrain_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.terrainLod, 0);
   props_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.propDistance, settings_.grassDensity);
   if (game.phase() != GamePhase::LoadingWorld) character_->submit(kViewScene, game.animator().parts(), false);
+  water_->submit(kViewScene, frustum);  // translucent: after opaque geometry
 
   // Sky last (depth test against the far plane only).
   {

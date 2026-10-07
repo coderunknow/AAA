@@ -222,17 +222,24 @@ PropMesh makeFern(uint32_t seed, int lod) {
 }
 
 PropMesh makeGrassClump(uint32_t seed, int lod) {
+  // A loose tussock: cards fan outward from a small base at varied heights, so the clump
+  // reads as a soft mound of blades from every angle rather than a crossed-quad cylinder.
   Rng rng(seed * 4409u + 1u);
   PropMesh out;
-  const int cards = lod == 0 ? 4 : 2;
+  const int cards = lod == 0 ? 7 : lod == 1 ? 4 : 2;
   for (int c = 0; c < cards; ++c) {
-    const float a = (c + rng.range(-0.2f, 0.2f)) * kPi / cards;
-    const float h = rng.range(0.35f, 0.6f);
-    const float w = rng.range(0.28f, 0.4f);
-    const Vec3 off{rng.range(-0.1f, 0.1f), 0, rng.range(-0.1f, 0.1f)};
+    const float a = (c + rng.range(-0.3f, 0.3f)) * kPi / cards;
+    const float h = rng.range(0.22f, 0.36f) * (c % 3 == 0 ? 1.25f : 1.0f);  // half height
+    const float w = rng.range(0.16f, 0.26f);
+    const float r = rng.range(0.0f, 0.22f);
+    const float oa = rng.range(0.0f, kTwoPi);
+    const Vec3 base{std::cos(oa) * r, 0, std::sin(oa) * r};
     const Vec3 ax{std::cos(a) * w, 0, std::sin(a) * w};
-    addCard(out.foliage, off + Vec3{0, h, 0}, ax, Vec3{rng.range(-0.06f, 0.06f), h, 0}, FoliageTile::GrassBlades,
-            Vec3{0, 1, 0}, 0.45f, 1.0f, 0.0f, 1.0f, rng.nextFloat());
+    // Lean away from the clump centre (and a little randomly) so tops splay outward.
+    const Vec3 lean = (r > 0.02f ? normalize(base) : Vec3{std::cos(oa), 0, std::sin(oa)}) * rng.range(0.05f, 0.14f);
+    const Vec3 ay{lean.x, h, lean.z};
+    addCard(out.foliage, base + ay, ax, ay, FoliageTile::GrassBlades, Vec3{lean.x * 2.0f, 1, lean.z * 2.0f}, 0.25f,
+            1.0f, 0.0f, 1.0f, rng.nextFloat());
   }
   out.finalize();
   return out;

@@ -83,3 +83,11 @@ Verified results (this sandbox: 2 CPU cores, no GPU):
 - `web-release` build: index.wasm 1.67 MB, index.data 46 KB. In headless Chromium (SwiftShader software WebGL2), `?quality=low` 960×540: loading complete in 2.5 s, frames presented, no console errors. First visually inspected frame: `docs/qa/2026-10-07-first-frame-low-swiftshader.png`.
 - Performance: ~1 FPS under SwiftShader on 2 CPU cores. NOT representative of any GPU; no real-hardware FPS has been measured.
 - Visual QA of first frame (honest): pipeline works (terrain, instanced pines, cascaded shadows, sky/clouds, character, grass, tonemap) but look is far from target — no mist, over-exposed pale terrain, lime foliage, grass card band at near plane, camera too low. Next: visual polish loop.
+
+## #6 — 2026-10-07 — DONE: visual retune pass, stream water, look-input settle fix
+- Retune (verified visually in qa/run4–run7, web-release, quality=low, 960×540, SwiftShader software WebGL2 — not representative of GPU performance; ~0.95 rAF/s measured here): sky/fog/exposure retuned, layered valley mist, darker rock/dirt/moss/grass terrain layers, rust-brown needle litter, dithered near-camera foliage fade.
+- Grass clump rebuilt (7/4/2 splayed cards, varied heights, root AO); grass excluded from the trail (smoothstep(0.9,2.4,trail)); spacing 0.62 m.
+- Water: new `WaterRenderer` (ribbon along stream polyline, 48 m culled segments) + `vs/fs_water.sc` (Fresnel sky reflection, scrolling ripple normals, sun glint, tannin body, edge foam, fog). Built (native-headless 120 frames clean, web-release), visually inspected in qa/run5 and qa/run7: reads as a stream with sky reflection; 0 console errors.
+- CONTRADICTION found & fixed: identical "still" playtests produced different camera framing (run5 vs run6). Cause (inferred, consistent with known Chrome behaviour): a spurious large mouse movement around the pointer-lock request on click. Fix: drop single motion events >300 px and ignore look deltas for 3 frames after any pointer-lock state change. Verified: run7 full scripted playtest gives the stable over-shoulder framing.
+- Unit tests: 27/27 pass.
+- Known visual gaps (not yet addressed): grass cards still too saturated/yellow-lime at close range; character is a blocky stand-in; pine crowns read as flat cards from below; distant mountains pale/flat.

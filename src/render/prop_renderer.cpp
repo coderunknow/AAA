@@ -29,23 +29,23 @@ struct KindStyle {
 // Linear-space albedo; values are deliberately low (forest bark/stone is dark).
 const KindStyle kStyles[kPropKindCount] = {
     // Pine: reddish-grey bark, deep blue-green needles
-    {4, 0.0f, 45.0f, 140.0f, 1000.0f, {0.13f, 0.09f, 0.07f}, {0.2f, 0.15f, 0.11f}, {0.75f, 0.85f, 0.8f}, {1.0f, 1.05f, 0.85f}, 0.45f, 0.55f, true},
+    {4, 0.0f, 45.0f, 140.0f, 1000.0f, {0.13f, 0.09f, 0.07f}, {0.2f, 0.15f, 0.11f}, {0.52f, 0.58f, 0.58f}, {0.72f, 0.74f, 0.62f}, 0.45f, 0.55f, true},
     // Young pine: lighter, fresher needles
-    {3, 0.0f, 35.0f, 110.0f, 700.0f, {0.14f, 0.1f, 0.075f}, {0.2f, 0.15f, 0.1f}, {0.9f, 1.0f, 0.85f}, {1.1f, 1.15f, 0.9f}, 0.45f, 0.6f, true},
+    {3, 0.0f, 35.0f, 110.0f, 700.0f, {0.14f, 0.1f, 0.075f}, {0.2f, 0.15f, 0.1f}, {0.62f, 0.68f, 0.6f}, {0.82f, 0.84f, 0.66f}, 0.45f, 0.6f, true},
     // Bamboo: green to straw-yellow culms
-    {3, 3.0f, 35.0f, 100.0f, 600.0f, {0.16f, 0.24f, 0.08f}, {0.3f, 0.3f, 0.12f}, {0.85f, 0.95f, 0.75f}, {1.1f, 1.1f, 0.8f}, 0.4f, 0.75f, true},
+    {3, 3.0f, 35.0f, 100.0f, 600.0f, {0.16f, 0.24f, 0.08f}, {0.3f, 0.3f, 0.12f}, {0.66f, 0.74f, 0.58f}, {0.86f, 0.86f, 0.62f}, 0.4f, 0.75f, true},
     // Fern
-    {3, 0.0f, 15.0f, 35.0f, 70.0f, {0.1f, 0.1f, 0.1f}, {0.1f, 0.1f, 0.1f}, {0.7f, 0.85f, 0.65f}, {1.05f, 1.1f, 0.8f}, 0.4f, 0.8f, false},
+    {3, 0.0f, 15.0f, 35.0f, 70.0f, {0.1f, 0.1f, 0.1f}, {0.1f, 0.1f, 0.1f}, {0.5f, 0.6f, 0.46f}, {0.75f, 0.8f, 0.58f}, 0.4f, 0.8f, false},
     // Rock: grey-brown granite
     {4, 1.0f, 25.0f, 70.0f, 260.0f, {0.16f, 0.15f, 0.14f}, {0.24f, 0.22f, 0.19f}, {}, {}, 0.5f, 0.0f, false},
     // Boulder
     {3, 1.0f, 40.0f, 130.0f, 600.0f, {0.15f, 0.145f, 0.135f}, {0.23f, 0.21f, 0.18f}, {}, {}, 0.5f, 0.0f, true},
     // Karst spire: pale limestone
-    {3, 2.0f, 120.0f, 400.0f, 1500.0f, {0.36f, 0.35f, 0.32f}, {0.46f, 0.44f, 0.39f}, {0.8f, 0.9f, 0.8f}, {1.0f, 1.05f, 0.85f}, 0.45f, 0.5f, true},
+    {3, 2.0f, 120.0f, 400.0f, 1500.0f, {0.27f, 0.265f, 0.245f}, {0.36f, 0.35f, 0.32f}, {0.8f, 0.9f, 0.8f}, {1.0f, 1.05f, 0.85f}, 0.45f, 0.5f, true},
     // Fallen log
     {2, 4.0f, 25.0f, 70.0f, 200.0f, {0.12f, 0.09f, 0.065f}, {0.18f, 0.13f, 0.09f}, {0.8f, 0.9f, 0.7f}, {1.0f, 1.0f, 0.8f}, 0.45f, 0.6f, false},
     // Grass
-    {3, 0.0f, 20.0f, 40.0f, 48.0f, {0.1f, 0.1f, 0.1f}, {0.1f, 0.1f, 0.1f}, {0.8f, 0.9f, 0.6f}, {1.15f, 1.1f, 0.7f}, 0.4f, 0.85f, false},
+    {3, 0.0f, 20.0f, 40.0f, 48.0f, {0.1f, 0.1f, 0.1f}, {0.1f, 0.1f, 0.1f}, {0.36f, 0.46f, 0.36f}, {0.58f, 0.6f, 0.42f}, 0.4f, 0.85f, false},
 };
 
 procgen::PropMesh makeKind(PropKind k, uint32_t seed, int lod) {

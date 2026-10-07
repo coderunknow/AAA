@@ -15,6 +15,7 @@ class ShaderLibrary;
 class TerrainRenderer;
 class PropRenderer;
 class CharacterRenderer;
+class WaterRenderer;
 
 enum class QualityPreset : int { Low = 0, Medium = 1, High = 2 };
 const char* qualityName(QualityPreset q);
@@ -96,6 +97,7 @@ class Renderer {
   std::unique_ptr<TerrainRenderer> terrain_;
   std::unique_ptr<PropRenderer> props_;
   std::unique_ptr<CharacterRenderer> character_;
+  std::unique_ptr<WaterRenderer> water_;
 
   bgfx::FrameBufferHandle hdrFb_ = BGFX_INVALID_HANDLE, shadowFb_ = BGFX_INVALID_HANDLE;
   bgfx::TextureHandle hdrColor_ = BGFX_INVALID_HANDLE, shadowTex_ = BGFX_INVALID_HANDLE;
