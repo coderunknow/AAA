@@ -1,0 +1,12 @@
+# Build outputs (all presets write to build/<preset>)
+/build/
+# Node tooling for browser QA
+node_modules/
+# Scratch QA runs (curated screenshots are copied to docs/qa/)
+/qa/
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+__pycache__/

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mistpine</title>
+<style>
+  :root { --ink: #e8e4da; --dim: #9a978e; --accent: #c9b98f; --bg: #0b0e10; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
+  #canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none;
+    background: var(--bg); cursor: crosshair; }
+  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; transition: opacity 1.2s ease; }
+  #loading { background: radial-gradient(ellipse at 50% 60%, #1a2120 0%, #0b0e10 70%); z-index: 3; }
+  #loading.done { opacity: 0; pointer-events: none; }
+  h1 { font-weight: 400; letter-spacing: 0.5em; font-size: clamp(28px, 4vw, 52px); margin: 0 0 0.2em 0.5em; }
+  .sub { color: var(--dim); letter-spacing: 0.25em; font-size: 13px; text-transform: uppercase; }
+  .bar { width: min(360px, 60vw); height: 2px; background: #ffffff1a; margin: 42px 0 14px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width 0.3s ease; }
+  #stage { color: var(--dim); font-size: 13px; letter-spacing: 0.08em; min-height: 1.2em; }
+  #error { display: none; background: #0b0e10f0; z-index: 5; text-align: center; padding: 0 10vw; }
+  #error p { color: var(--dim); max-width: 560px; line-height: 1.6; }
+  #pause { display: none; background: #0b0e10b0; z-index: 4; backdrop-filter: blur(3px); cursor: pointer; }
+  .keys { display: grid; grid-template-columns: auto auto; gap: 6px 22px; margin-top: 28px; font-size: 14px; }
+  .keys span:nth-child(odd) { color: var(--accent); text-align: right; font-family: ui-monospace, monospace; font-size: 12px; }
+  .hint { margin-top: 30px; color: var(--dim); font-size: 13px; letter-spacing: 0.1em; }
+  #prompt { position: fixed; left: 50%; bottom: 14vh; transform: translateX(-50%); z-index: 2; font-size: 15px;
+    letter-spacing: 0.08em; text-shadow: 0 1px 6px #000c; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
+
+<div id="loading" class="overlay">
+  <h1>MISTPINE</h1>
+  <div class="sub">a valley in the clouds</div>
+  <div class="bar"><div id="progress"></div></div>
+  <div id="stage">Starting</div>
+</div>
+
+<div id="pause" class="overlay">
+  <h1>PAUSED</h1>
+  <div class="keys">
+    <span>W A S D</span><span>move</span>
+    <span>MOUSE</span><span>look</span>
+    <span>SHIFT</span><span>run</span>
+    <span>CTRL</span><span>walk slowly</span>
+    <span>SPACE</span><span>jump</span>
+    <span>C</span><span>crouch</span>
+    <span>E</span><span>interact</span>
+    <span>WHEEL</span><span>camera distance</span>
+    <span>ESC</span><span>pause</span>
+  </div>
+  <div class="hint">click to continue</div>
+</div>
+
+<div id="error" class="overlay">
+  <h1>MISTPINE</h1>
+  <p id="errortext"></p>
+</div>
+
+<div id="prompt"></div>
+
+<script>
+  // Thin bootstrap only: DOM overlays + Emscripten Module config. All game logic is C++/WASM.
+  (function () {
+    const $ = (id) => document.getElementById(id);
+    const showError = (msg) => {
+      $("errortext").textContent = msg;
+      $("error").style.display = "flex";
+      $("loading").classList.add("done");
+    };
+    // Probe WebGL2 before downloading the game.
+    const probe = document.createElement("canvas").getContext("webgl2");
+    if (!probe) {
+      showError("This game needs WebGL 2. Please use a recent version of Chrome, Edge, Firefox or Safari with hardware acceleration enabled.");
+      return;
+    }
+    const canvas = $("canvas");
+    canvas.addEventListener("webglcontextlost", (e) => {
+      e.preventDefault();
+      showError("The graphics context was lost (the GPU driver reset or ran out of memory). Reload the page to continue.");
+    }, false);
+    let paused = false;
+    $("pause").addEventListener("click", () => { canvas.focus(); if (canvas.requestPointerLock) canvas.requestPointerLock(); canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })); canvas.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape", code: "Escape", bubbles: true })); });
+
+    window.Module = {
+      canvas: canvas,
+      print: (t) => console.log(t),
+      printErr: (t) => console.warn(t),
+      setStatus: (s) => { if (s && !window.Module.__ready) $("stage").textContent = s.replace(/\(.*\)/, "").trim() || "Downloading"; },
+      aaaLoading: (stage, f) => { $("stage").textContent = stage; $("progress").style.width = (Math.max(0, Math.min(1, f)) * 100).toFixed(1) + "%"; },
+      aaaReady: () => {
+        window.Module.__ready = true;
+        $("progress").style.width = "100%";
+        $("loading").classList.add("done");
+        canvas.focus();
+        window.__mistpineReady = true;  // used by the automated browser playtest
+      },
+      aaaError: (msg) => showError(msg),
+      aaaPause: (p) => { paused = p; $("pause").style.display = p ? "flex" : "none"; },
+      aaaPrompt: (t) => { $("prompt").textContent = t; $("prompt").style.opacity = t ? 1 : 0; },
+      onAbort: (what) => showError("The game stopped unexpectedly (" + what + "). Reload the page to try again."),
+    };
+    window.addEventListener("error", (e) => { if (!window.Module.__ready) console.warn(e.message); });
+  })();
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>
