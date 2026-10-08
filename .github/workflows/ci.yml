@@ -241,21 +241,24 @@ jobs:
           cmake --build --preset tools --target shaderc
       - name: Smoke-test the Windows shaderc (spirv + dx11)
         run: |
+          set -x
           SHADERC="build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc.exe"
           BGXSRC="build/tools/_deps/bgfx_cmake-src/bgfx/src"
-          ls -la "$(dirname "$SHADERC")" > /tmp/smoke.log 2>&1
+          : > /tmp/smoke.log
+          ls -la "$(dirname "$SHADERC")" >> /tmp/smoke.log 2>&1 || true
           DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe 2>/dev/null | tail -1)
-          if [ -n "$DUMPBIN" ]; then "$DUMPBIN" /dependents "$SHADERC" >> /tmp/smoke.log 2>&1 || true; fi
+          if [ -n "${DUMPBIN:-}" ]; then "$DUMPBIN" /dependents "$SHADERC" >> /tmp/smoke.log 2>&1 || true; fi
           mkdir -p /tmp/smoke
+          spirv_rc=1; dx11_rc=1
           "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.spirv.bin --type vertex --platform linux -p spirv \
-            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1
-          echo "spirv exit: $?" >> /tmp/smoke.log
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1 && spirv_rc=0
+          echo "spirv exit: $spirv_rc" >> /tmp/smoke.log
           "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.dx11.bin --type vertex --platform windows -p s_5_0 \
-            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1
-          echo "dx11 exit: $?" >> /tmp/smoke.log
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1 && dx11_rc=0
+          echo "dx11 exit: $dx11_rc" >> /tmp/smoke.log
           cat /tmp/smoke.log
-          if ! grep -q "spirv exit: 0" /tmp/smoke.log || ! grep -q "dx11 exit: 0" /tmp/smoke.log; then
-            scripts/ci_annotate_failure.sh /tmp/smoke.log "windows shaderc smoke test failed"
+          if [ "$spirv_rc" -ne 0 ] || [ "$dx11_rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/smoke.log "windows shaderc smoke test failed"
             exit 1
           fi
       - name: Compile the Windows profile set (dx11, spirv, glsl)

@@ -51,4 +51,12 @@ void reportState(const char* json) {
 #endif
 }
 
+void reportBench(const char* json) {
+#if defined(__EMSCRIPTEN__)
+  aaa_js_bench(json);
+#else
+  (void)json;
+#endif
+}
+
 }  // namespace aaa::web

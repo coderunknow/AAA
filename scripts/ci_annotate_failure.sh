@@ -9,14 +9,23 @@
 # because dependency configure/build logs are dominated by thousands of
 # routine probe lines; then append the raw tail so successful steps stay
 # visible next to the failures. Falls back to the raw tail when nothing
-# matches.
+# matches, and to a pure-shell implementation when no Python is available
+# (the Windows runners do not always expose python3 to bash).
 #
 # Usage: scripts/ci_annotate_failure.sh <logfile> <title>
 # -----------------------------------------------------------------------------
 set -euo pipefail
 log="${1:?usage: ci_annotate_failure.sh <logfile> <title>}"
 title="${2:-step failed}"
-python3 - "$log" "$title" <<'PY'
+
+py=""
+for cand in "${PYTHON:-}" python3 python; do
+  [ -n "$cand" ] || continue
+  if command -v "$cand" >/dev/null 2>&1; then py="$cand"; break; fi
+done
+
+if [ -n "$py" ]; then
+  "$py" - "$log" "$title" <<'PY'
 import re
 import sys
 
@@ -30,9 +39,9 @@ except OSError as e:
 # Lines that almost always indicate a real failure in cmake/ninja/ctest output.
 pat = re.compile(
     r"error|Error|ERROR|fatal|FATAL|FAILED|failed|Could NOT find|could not find|"
-    r"No such file|not found|No such device|No package|Unable to|denied|"
-    r"No supported|unsupported|missing:|Missing|CMake Error|ninja: build stopped|"
-    r"undefined reference|cannot find -l|ld returned",
+    r"No such file|No such device|No package|Unable to|denied|No supported|"
+    r"unsupported|missing:|Missing|CMake Error|ninja: build stopped|"
+    r"undefined symbol|undefined reference|cannot find -l|ld returned|command not found",
     re.IGNORECASE,
 )
 # Routine noise to suppress even when it matches (e.g. "Looking for X - not found").
@@ -63,3 +72,9 @@ if len(text) > 20000:
 text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 print(f"::error::{title} — log summary:%0A{text}")
 PY
+else
+  # No Python: send the raw tail (escaped) so the step still explains itself.
+  tail_n=$(tail -n 60 "$log" 2>/dev/null || echo "")
+  escaped=$(printf '%s' "$tail_n" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n/%0A/g')
+  printf '::error::%s — log tail (no python available):%%0A%s\n' "$title" "$escaped"
+fi

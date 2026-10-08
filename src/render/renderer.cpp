@@ -447,7 +447,9 @@ void Renderer::resize(uint32_t w, uint32_t h) {
 void Renderer::frameStats(float& cpuMs, float& gpuMs, bool& gpuAvailable) const {
   const bgfx::Stats* st = bgfx::getStats();
   cpuMs = static_cast<float>(double(st->cpuTimeEnd - st->cpuTimeBegin) * 1000.0 / double(st->cpuTimerFreq));
-  if (st->gpuTimerFreq > 0) {
+  // A backend can report a timer frequency without having measured anything (the
+  // Noop renderer does), so require a real sample before claiming GPU timings.
+  if (st->gpuTimerFreq > 0 && st->gpuTimeEnd > st->gpuTimeBegin) {
     gpuMs = static_cast<float>(double(st->gpuTimeEnd - st->gpuTimeBegin) * 1000.0 / double(st->gpuTimerFreq));
     gpuAvailable = true;
   } else {
