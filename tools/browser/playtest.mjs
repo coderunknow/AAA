@@ -28,6 +28,8 @@ fs.mkdirSync(out, { recursive: true });
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.data': 'application/octet-stream',
   '.map': 'application/json', '.json': 'application/json' };
+// --file <path> runs the single-file web build straight from file:// (no HTTP server).
+const fileMode = args.file && args.file !== 'true' ? path.resolve(args.file) : null;
 let server = null;
 let pageUrl;
 if (fileMode) {
