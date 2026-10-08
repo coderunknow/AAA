@@ -44,6 +44,15 @@ if(AAA_BUILD_TESTS AND NOT AAA_PLATFORM_WEB)
   enable_testing()  # before any add_subdirectory so app smoke tests register too
 endif()
 
+# Portable native builds: on Windows the CI/release runners resolve CMake's Ninja
+# generator to the bundled MinGW GCC, which by default links libgcc, libstdc++ and
+# winpthread dynamically. Those DLLs are not on a user's machine, so the packaged
+# .zip would not run after "unzip -> run" (PROMPT §9.2). Link them in statically.
+if(MINGW)
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Core, platform-independent code (world generation, gameplay, procedural assets)

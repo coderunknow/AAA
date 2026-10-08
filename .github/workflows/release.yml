@@ -242,8 +242,8 @@ jobs:
           rm -rf /tmp/mistpine-smoke && mkdir -p /tmp/mistpine-smoke
           unzip -q "mistpine-v${VERSION}-windows-x64.zip" -d /tmp/mistpine-smoke
           cd /tmp   # deliberately not the package directory
-          /tmp/mistpine-smoke/Mistpine/mistpine.exe --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1
-          rc=$?
+          /tmp/mistpine-smoke/Mistpine/mistpine.exe --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1 || rc=$?
+          rc=${rc:-0}
           cat smoke.log
           if [ "$rc" -ne 0 ]; then
             "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged Windows smoke test exited $rc"
@@ -357,8 +357,8 @@ jobs:
           rm -rf /tmp/mistpine-smoke && mkdir -p /tmp/mistpine-smoke
           tar -xzf "mistpine-v${VERSION}-linux-x86_64.tar.gz" -C /tmp/mistpine-smoke
           cd /tmp
-          /tmp/mistpine-smoke/Mistpine/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-tar.log 2>&1
-          rc=$?
+          /tmp/mistpine-smoke/Mistpine/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-tar.log 2>&1 || rc=$?
+          rc=${rc:-0}
           cat smoke-tar.log
           if [ "$rc" -ne 0 ]; then
             "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-tar.log "packaged tar.gz smoke test exited $rc"
@@ -373,8 +373,8 @@ jobs:
           rm -rf /tmp/mistpine-appimage && mkdir -p /tmp/mistpine-appimage
           (cd /tmp/mistpine-appimage && "$GITHUB_WORKSPACE/mistpine-v${VERSION}-linux-x86_64.AppImage" --appimage-extract >/dev/null)
           cd /
-          /tmp/mistpine-appimage/squashfs-root/usr/bin/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-appimage.log 2>&1
-          rc=$?
+          /tmp/mistpine-appimage/squashfs-root/usr/bin/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-appimage.log 2>&1 || rc=$?
+          rc=${rc:-0}
           cat smoke-appimage.log
           if [ "$rc" -ne 0 ]; then
             "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-appimage.log "packaged AppImage smoke test exited $rc"
@@ -487,8 +487,8 @@ jobs:
       - name: Packaged smoke test (foreign CWD)
         run: |
           cd /tmp
-          "$GITHUB_WORKSPACE/Mistpine.app/Contents/MacOS/mistpine" --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1
-          rc=$?
+          "$GITHUB_WORKSPACE/Mistpine.app/Contents/MacOS/mistpine" --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1 || rc=$?
+          rc=${rc:-0}
           cat smoke.log
           if [ "$rc" -ne 0 ]; then
             "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged macOS smoke test exited $rc"

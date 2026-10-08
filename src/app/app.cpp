@@ -460,7 +460,8 @@ void App::writeBenchJson(bool completed) {
     const BenchPhase& bp = benchPhases_[static_cast<size_t>(p)];
     out += "    {\n";
     out += std::string("      \"name\": \"") + bp.name + "\",\n";
-    std::snprintf(buf, sizeof(buf), "      \"hours\": %.1f,\n      \"frames\": %zu,\n", bp.hours, bp.wallMs.size());
+    std::snprintf(buf, sizeof(buf), "      \"hours\": %.1f,\n      \"frames\": %llu,\n", bp.hours,
+                 static_cast<unsigned long long>(bp.wallMs.size()));
     out += buf;
     appendStat(out, "wallMs", summarize(bp.wallMs));
     out += ",\n";
@@ -480,7 +481,7 @@ void App::writeBenchJson(bool completed) {
   }
   out += "  ],\n";
   out += "  \"total\": {\n";
-  std::snprintf(buf, sizeof(buf), "    \"frames\": %zu,\n", allWall.size());
+  std::snprintf(buf, sizeof(buf), "    \"frames\": %llu,\n", static_cast<unsigned long long>(allWall.size()));
   out += buf;
   appendStat(out, "wallMs", summarize(allWall));
   out += ",\n";
@@ -497,7 +498,8 @@ void App::writeBenchJson(bool completed) {
   out += "}\n";
 #if defined(__EMSCRIPTEN__)
   web::reportBench(out.c_str());
-  AAA_LOG_INFO("benchmark JSON (%zu bytes) exposed as window.__mistpineBench", out.size());
+  AAA_LOG_INFO("benchmark JSON (%llu bytes) exposed as window.__mistpineBench",
+               static_cast<unsigned long long>(out.size()));
 #else
   std::ofstream f(opts_.benchPath, std::ios::binary | std::ios::trunc);
   if (f) {
@@ -509,8 +511,11 @@ void App::writeBenchJson(bool completed) {
 #endif
   const BenchStat wall = summarize(allWall);
   const BenchStat cpu = summarize(allCpu);
-  AAA_LOG_INFO("bench summary: %zu frames, wall avg %.2f ms (p95 %.2f), cpu avg %.2f ms (p95 %.2f)%s",
-               allWall.size(), wall.avg, wall.p95, cpu.avg, cpu.p95, anyGpu ? ", gpu timings included" : "");
+  // %llu with an explicit cast rather than %zu: the MinGW toolchain links against
+  // MSVCRT, whose printf does not understand the C99 'z' length modifier.
+  AAA_LOG_INFO("bench summary: %llu frames, wall avg %.2f ms (p95 %.2f), cpu avg %.2f ms (p95 %.2f)%s",
+               static_cast<unsigned long long>(allWall.size()), wall.avg, wall.p95, cpu.avg, cpu.p95,
+               anyGpu ? ", gpu timings included" : "");
 }
 
 void App::saveNow(const char* reason) {
