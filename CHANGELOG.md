@@ -118,20 +118,35 @@ desktop builds and a web build, every artifact runnable immediately after downlo
   valley-scale gusts were already in place and are unchanged.
 - **Terrain**: moss/rock/soil/litter material layers with wet banks, triplanar rock, procedural
   detail normals — unchanged this pass (already at target).
-- **Time-of-day grading** (dawn/morning/midday/dusk/night) and the filmic ACES response with
-  scotopic night shift were already in place and are unchanged.
+- **Short character contact shadows** (High only): soft alpha-blended discs under the skinned
+  player and every wolf, depth-tested against the ground with no depth writes — no shadow map
+  and no extra render pass. Medium/Low fall back to the existing sun shadow.
+- **Time-of-day grading presets**: five art-directed post-tonemap grades — dawn (rose-gold),
+  morning (neutral-crisp), midday (neutral, slightly punchy), dusk (warm amber) and night (cool,
+  desaturated) — each a tint x saturation x contrast triple blended smoothly by hour. The
+  filmic ACES response with its scotopic night shift was already in place and is unchanged.
 - **Benchmark**: `--bench [path]` / `?bench=1` runs a deterministic camera route through day,
   dusk and night-with-campfire and writes JSON frame-time statistics (CPU timing, and bgfx GPU
   timing where the backend exposes it).
+- **Shader portability fixes**: `vec3(0.0)` is not a legal HLSL constructor (use `vec3_splat`),
+  and `mat3 * vec3` does not cross-compile (HLSL's `*` is component-wise and GLSL/HLSL disagree
+  on constructor majorness), so the SSAO kernel rotation is now written with explicit tangent
+  basis vectors. Both bugs were in the M4 shaders and only surfaced once the Windows dx11 job
+  got far enough to compile them.
 - Deferred (recorded in `DESIGN_LOG.md`): distant tree impostors, distant mountain silhouettes,
   water refraction, shore foam, campfire smoke, heat shimmer, TAA.
 
 ### QA and polish (M5)
 
 - Fixed visual QA matrix: `?qa=spawn|character|dusk|dawn|camp|shrine|wolves` plus the title
-  screen, captured as curated screenshots under `docs/qa/v0.1.0-*.png`.
+  screen, captured by `scripts/qa_matrix.sh` and curated under `docs/qa/v0.1.0-*.png`
+  (960x540, `low` preset, **software rendering** — they show what the renderer produces, not
+  performance; a GPU at `high` looks better).
 - In-engine UI: a click anywhere on the title/pause veil starts or resumes the journey (only
   the quiet "Start a new journey" button is excepted), matching the original DOM behaviour.
+- Browser QA harness: waits for `window.__mistpineState.menu` to reach the expected value
+  instead of sleeping a fixed time. The web build runs at about 1 FPS under SwiftShader, so a
+  fixed 1.5 s wait could be shorter than a single frame; the test is now frame-rate independent.
 
 ### Known limitations
 
