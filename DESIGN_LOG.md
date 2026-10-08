@@ -649,3 +649,43 @@ playtest, the release dry run and every platform's runner-side release check.
 
 **Stopping here.** PROMPT §14.3 requires stopping before the merge and asking the owner for
 explicit approval. No merge has been performed.
+
+### #21 — 2026-10-08 — DONE: close the last unverified acceptance criterion — persistence unavailable
+
+PROMPT §13 requires the single-file web build to "remain playable if persistence is
+unavailable". The handling was **implemented** in M1 (`src/platform/storage.cpp` guards every
+localStorage access; `App::saveNow` logs the failure at **info** level, shows a one-time toast
+and keeps running) but nothing in CI or the release pipeline ever exercised it, so it was not
+**tested** — an evidence gap in the §3.4 sense.
+
+**DONE.** Added a `nostorage` script to `tools/browser/playtest.mjs`. It installs an
+`evaluateOnNewDocument` hook that makes `window.localStorage` throw `SecurityError` on property
+access — how a browser that denies storage actually behaves, rather than a stub that quietly
+succeeds — then plays, walks, pauses (pause writes a save, which is the failure path), and
+resumes. It asserts that storage really is blocked, so the scenario cannot silently prove
+nothing.
+
+Wired into two places:
+
+* **CI** (browser job) — a third playtest over HTTP.
+* **Release** (web job) — the same script against the **single-file HTML over `file://`**, which
+  is the exact combination §13 names.
+
+**Evidence (both run locally, headless Chromium + SwiftShader WebGL2):**
+
+| Target | storageBlocked | playing | paused | resumed | console errors | ok |
+|---|---|---|---|---|---|---|
+| web build over HTTP | true | playing | pause | playing | **0** | true |
+| single-file HTML over `file://` | true | playing | pause | playing | **0** | true |
+
+The console log shows the failure path was genuinely taken and that it is not an error:
+
+```
+[info] save (autosave): FAILED
+[info] save (pause): FAILED
+```
+
+That matters: the release gate is zero console errors, so had `App::saveNow` used `AAA_LOG_ERROR`
+this scenario would have failed the build instead of passing unnoticed.
+
+Committing this moves the PR head, so CI and the release dry run are re-queued.

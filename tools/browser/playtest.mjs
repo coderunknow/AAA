@@ -97,6 +97,19 @@ const waitForMenu = async (menu, what) => {
   }
 };
 
+// `nostorage` scenario (PROMPT 13): persistence unavailable — private mode, blocked
+// storage, or a full quota. Make `window.localStorage` throw the way a browser that
+// denies storage does, before any page script runs. The game must stay playable and
+// must not log an ERROR (it reports the failure once as a toast instead).
+if (script === 'nostorage') {
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() { throw new DOMException('The operation is insecure.', 'SecurityError'); },
+    });
+  });
+}
+
 let ok = false;
 try {
   await page.goto(summary.url, { waitUntil: 'load', timeout: 120000 });
@@ -161,6 +174,30 @@ try {
     await sleep(2500);
     summary.resumedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
     await shot('03-resumed');
+  } else if (script === 'nostorage') {
+    // Persistence is blocked. Play normally, then force a save attempt (Escape ->
+    // pause writes the save) and confirm the journey survives it.
+    summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    await shot('01-spawn-no-storage');
+    await hold(['KeyW'], 3000);
+    await sleep(600);
+    await shot('02-after-walk-no-storage');
+    summary.storageBlocked = await page.evaluate(() => {
+      try { window.localStorage.getItem('probe'); return false; } catch (e) { return true; }
+    });
+    if (!summary.storageBlocked) throw new Error('localStorage was not blocked — the scenario proves nothing');
+    await press('Escape');
+    await waitForMenu('pause', 'pause menu after Escape with storage blocked');
+    await sleep(2500);
+    await shot('03-paused-no-storage');
+    summary.pausedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    if (summary.pausedMenu !== 'pause') throw new Error('expected the pause menu, got: ' + summary.pausedMenu);
+    // ...and it must resume just as if saving had worked.
+    await press('Escape');
+    await waitForMenu('playing', 'resume with storage blocked');
+    await sleep(1200);
+    summary.resumedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    await shot('04-resumed-no-storage');
   } else if (script === 'still') {
     await sleep(1500);
     await shot('01-still');

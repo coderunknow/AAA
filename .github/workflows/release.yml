@@ -128,6 +128,14 @@ jobs:
           cd tools/browser && node playtest.mjs --file "../../mistpine-v${VERSION}-web-singlefile.html" \
             --out ../../qa/release-singlefile --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/qa2.log 2>&1 ||
             { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/qa2.log "release browser QA (single-file over file://) failed"; exit 1; }
+      - name: Browser QA (single-file HTML over file://, persistence unavailable)
+        run: |
+          # PROMPT 13 lists "remain playable if persistence is unavailable" as a
+          # requirement of the single-file build specifically, so exercise that
+          # combination directly: file://, no server, storage denied.
+          cd tools/browser && node playtest.mjs --file "../../mistpine-v${VERSION}-web-singlefile.html" \
+            --out ../../qa/release-singlefile-nostorage --query "hours=9&quality=low" --script nostorage --width 960 --height 540 > /tmp/qa3.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/qa3.log "release browser QA (single-file over file://, no storage) failed"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: release-web

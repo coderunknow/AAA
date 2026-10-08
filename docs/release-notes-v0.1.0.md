@@ -83,6 +83,11 @@ Built, launched and smoke-tested on the release runners (headless 600-frame runs
 working directory, plus dependency audits on each platform). Unit tests, sanitizers, shader
 profile compilation and an automated browser playtest are green in CI.
 
+Both web artifacts are also verified with browser storage denied: the game stays playable,
+pauses and resumes normally, and reports the failed save once as a toast instead of spamming the
+console — so opening the single-file HTML in a private window or with storage blocked still
+works, you just lose progress when you leave.
+
 **Performance was not measured on real hardware.** Every rendering number in this project comes
 from software rendering (SwiftShader / Mesa llvmpipe) or from the Noop backend.
 

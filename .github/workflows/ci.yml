@@ -165,6 +165,16 @@ jobs:
           cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-persist \
             --query "hours=9&quality=low" --script persist --width 960 --height 540 > /tmp/playtest2.log 2>&1 ||
             { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/playtest2.log "browser playtest (persist) failed"; exit 1; }
+      - name: "Playtest (nostorage script: persistence unavailable)"
+        run: |
+          # PROMPT 13: the web build must stay playable when persistence is
+          # unavailable. The harness makes window.localStorage throw the way a
+          # browser that denies storage does, then plays, pauses (which writes a
+          # save) and resumes. Any console error fails the run, so this also
+          # asserts the failure is not reported at ERROR level.
+          cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-nostorage \
+            --query "hours=9&quality=low" --script nostorage --width 960 --height 540 > /tmp/playtest3.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/playtest3.log "browser playtest (nostorage) failed"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -76,8 +76,10 @@ Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
 | **37805433751** | release | v0.1.0-rc | **f8bd485** | **failure** | shader-assets ✅ web ✅ macOS ✅ Linux ✅; Windows ❌ — audit ran correctly, flagged 13 `api-ms-win-crt-*` imports |
 | **37808662729** | ci | branch | **aa260b9** | **success** | all 8 jobs green |
 | **37808656086** | release | v0.1.0-rc | **aa260b9** | **success** | **FULLY GREEN — all 6 jobs, incl. SHA256SUMS** |
-| next | ci | branch | (design-log commit) | pending | head re-validation |
-| next | release | v0.1.0-rc | (design-log commit) | pending | head re-validation |
+| **37812123959** | ci | branch | **682aa64** | **success** | all 8 jobs green — **final head** |
+| **37812119086** | release | v0.1.0-rc | **682aa64** | **success** | all 6 jobs green — **final head** |
+
+`682aa64` is the branch head and is fully verified on both workflows. Nothing has been merged.
 
 **Round-4 fix (commit `HEAD~`-successor), both root-caused:**
 
@@ -129,6 +131,13 @@ reports `mergeStateStatus: UNSTABLE` while `mergeable` is `MERGEABLE`.
 * **Browser playtest** (headless Chromium, SwiftShader WebGL2/GLES3): `ok: true`,
   **0 console errors**, 7 screenshots, title→playing confirmed via `window.__mistpineState`.
   Note `rafFpsIdle ≈ 1.09` — SwiftShader software rendering, *not* a GPU measurement.
+* **Persistence unavailable (PROMPT §13)** — new `nostorage` playtest scenario: the harness
+  makes `window.localStorage` throw `SecurityError` before any page script runs, then plays,
+  walks, pauses (pause writes the save) and resumes. Verified **locally** on both the HTTP
+  build and the single-file HTML over `file://`: `storageBlocked: true`, all menu transitions
+  correct, **0 console errors**, `ok: true`. The console log confirms the failure path is taken
+  at `[info]` (`save (autosave): FAILED`, `save (pause): FAILED`) — never `[error]`. Wired into
+  the CI browser job and the release web job.
 * **QA matrix** (`scripts/qa_matrix.sh`, per-scenario `scenario:hours` pairs):
   **7/7 scenarios ok, 0 console errors**. Curated to
   `docs/qa/v0.1.0-{title,day-spawn,character,dusk-forest,night-campfire,shrine,night-wolf,misty-dawn}-low-swiftshader.png`
@@ -191,8 +200,8 @@ Privacy & Security → Open Anyway.
 1. ~~Get CI green on the PR head~~ — **done, all 8 jobs success (`37808662729`).**
 2. ~~Get the release dry run green~~ — **done, all 6 jobs success (`37808656086`).**
 3. ~~Fix the Windows and Linux release blockers~~ — **done (rounds 4-6).**
-4. Re-validate the head after the final design-log commit (§13: *the current PR head* must be
-   green, and a documentation commit still moves the head).
+4. ~~Re-validate the head after the final design-log commit~~ — **done: CI `37812123959` and
+   release `37812119086` are both green on head `682aa64`.**
    Windows `Dependency audit (PE import table)` is the only step that has ever failed in the
    last three dry runs, and each failure has been the audit itself, not the artifact. The
    annotation carries the toolchain (`gcc -dumpmachine`), the machine type and the full import
