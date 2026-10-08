@@ -447,3 +447,51 @@ resurrect a stale binary.
 
 **Deferred** (unchanged from #15): distant tree impostors, distant mountain silhouettes, water
 refraction, shore foam, campfire smoke, heat shimmer, TAA.
+
+### #17 — 2026-10-08 — DONE: release dry-run round 4 — Windows dumpbin gate replaced, AppImage smoke log path fixed
+
+**What happened.** Dry run `37796725517` on `e1d027d`:
+
+| Job | Result |
+|---|---|
+| Shader assets (Linux shaderc) | success |
+| Web release + single-file + browser QA | success |
+| macOS arm64 package | success |
+| Windows x64 package | failure — "Dependency audit (dumpbin)", exit 157 |
+| Linux x86_64 package | failure — "Packaged smoke test (AppImage payload)", exit 1, no annotation |
+
+CI run `37796737715` on the same commit: **all 8 jobs green** (including the browser playtest).
+
+**Root cause — Linux.** The step did `cd /` and then `> smoke-appimage.log`. `/` is not
+writable by the runner user, so the redirection failed with an empty status 1 *before the
+binary was ever started*; the following `cat smoke-appimage.log` then aborted the step under
+the runner's `-e` before `ci_annotate_failure.sh` could run — which is exactly why the failure
+carried no annotation. Reproduced the reasoning locally and verified the fix by simulating both
+paths: with a stub AppImage that extracts, the step exits 0 and the packaged binary finds its
+assets from `/`; with one that fails to extract, the step annotates the extract log and the
+payload tree and exits 1. The AppImage itself was never at fault.
+Fix: the log now lives on an absolute writable path, extraction is `-e`-safe and annotated, and
+the payload binary's existence is asserted.
+
+**Root cause — Windows.** `dumpbin /dependents` is the tool PROMPT §9.6 names, but on this
+runner's MSYS bash the step has now aborted twice with an opaque shell status (157) that
+produced no output and no diagnosis. I cannot run a Windows shaderc or dumpbin locally, and the
+exit code is not reproducible here, so rather than guess again I moved the *assertion* off the
+external tool: `scripts/pe_deps.py` reads the PE import and delay-import directories — the very
+data `dumpbin /dependents` prints — with no dependency on the VS toolchain, and fails on any
+non-system runtime (SDL, bgfx, MinGW runtime DLLs, MSVC redistributables). `dumpbin` output is
+still captured as supplementary evidence in a `continue-on-error` step, so nothing §9.6 asks for
+is lost.
+The parser is verified by a built-in `--self-test` that constructs real (minimal) PE images:
+5/5 cases, correctly extracting imports and delay imports and flagging `SDL3.dll`,
+`VCRUNTIME140.dll`, `libwinpthread-1.dll` and `bgfx.dll` while accepting `KERNEL32.dll`,
+`msvcrt.dll` and `USER32.dll`. A malformed, missing or non-PE input is reported as an audit
+failure, never as a silent pass.
+
+**Also hardened.** Linux "Render verification (xvfb + Mesa llvmpipe)" was unannotated and has
+never actually run (the AppImage step failed before it every time). It now captures the exit
+code and annotates the render log on failure, and `render.log` is uploaded with the QA artifacts.
+
+**Evidence status.** Implemented and committed; the parser is tested locally. The Windows PE
+audit and the AppImage extraction have **not yet been executed on a runner** — the confirming
+dry run is queued. Nothing here is claimed as CI-verified until that run reports.

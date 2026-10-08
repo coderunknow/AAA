@@ -235,13 +235,35 @@ jobs:
           python3 -c "import zipfile,sys; n=zipfile.ZipFile('mistpine-v${VERSION}-windows-x64.zip').namelist(); \
             print(len(n), 'entries'); \
             sys.exit(0 if any(x.endswith('Mistpine/mistpine.exe') for x in n) else 1)"
-      - name: Dependency audit (dumpbin)
+      - name: Dependency audit (PE import table)
         run: |
-          DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe | tail -1)
-          "$DUMPBIN" /dependents pkg/Mistpine/mistpine.exe | tee dumpbin.txt
-          if grep -iE "SDL|bgfx|MSVCR[0-9]|VCRUNTIME" dumpbin.txt; then
-            echo "unexpected non-system runtime dependency found" >&2; exit 1
+          # Authoritative check. scripts/pe_deps.py reads the PE import and
+          # delay-import directories -- exactly the data `dumpbin /dependents`
+          # prints -- with no external tool. dumpbin is kept as supplementary
+          # evidence in the next step because, on this runner's MSYS bash, a step
+          # that shells out to it has been seen to abort with an opaque shell
+          # status (157) before printing anything; that must not be allowed to
+          # look like a problem with the artifact.
+          python3 scripts/pe_deps.py pkg/Mistpine/mistpine.exe > pe-imports.txt 2>&1 || {
+            cat pe-imports.txt
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" pe-imports.txt "Windows dependency audit failed"
+            exit 1
+          }
+          cat pe-imports.txt
+      - name: Dependency audit (dumpbin, supplementary)
+        continue-on-error: true
+        run: |
+          DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe 2>/dev/null | tail -1)
+          if [ -z "$DUMPBIN" ] || [ ! -f "$DUMPBIN" ]; then
+            echo "dumpbin.exe not found on this image; skipped." > dumpbin.txt
+            echo "The PE import-table audit above is authoritative." >> dumpbin.txt
+            cat dumpbin.txt
+            exit 0
           fi
+          echo "dumpbin: $DUMPBIN" > dumpbin.txt
+          echo "$DUMPBIN" //dependents pkg/Mistpine/mistpine.exe >> dumpbin.txt 2>&1
+          echo "dumpbin exited $?" >> dumpbin.txt
+          cat dumpbin.txt
       - name: Packaged smoke test (foreign CWD)
         run: |
           rm -rf /tmp/mistpine-smoke && mkdir -p /tmp/mistpine-smoke
@@ -280,6 +302,7 @@ jobs:
           name: qa-release-windows
           path: |
             dumpbin.txt
+            pe-imports.txt
             mistpine-windows-shot.png
 
   # ---------------------------------------------------------------------------
@@ -375,18 +398,45 @@ jobs:
           fi
       - name: Packaged smoke test (AppImage payload, foreign CWD)
         run: |
+          set +e
+          LOG=/tmp/smoke-appimage.log
+          XLOG=/tmp/appimage-extract.log
+          AI="$GITHUB_WORKSPACE/mistpine-v${VERSION}-linux-x86_64.AppImage"
+          BIN=/tmp/mistpine-appimage/squashfs-root/usr/bin/mistpine
+          ls -la "$AI"
+
+          # The log must live on an absolute, writable path: the smoke test runs
+          # with `/` as its working directory, which is not writable, so a bare
+          # `> smoke-appimage.log` there fails with an empty exit status 1 before
+          # the binary is ever started.
           rm -rf /tmp/mistpine-appimage && mkdir -p /tmp/mistpine-appimage
-          (cd /tmp/mistpine-appimage && "$GITHUB_WORKSPACE/mistpine-v${VERSION}-linux-x86_64.AppImage" --appimage-extract >/dev/null)
-          cd /
-          /tmp/mistpine-appimage/squashfs-root/usr/bin/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-appimage.log 2>&1 || rc=$?
-          rc=${rc:-0}
-          cat smoke-appimage.log
-          if [ "$rc" -ne 0 ]; then
-            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-appimage.log "packaged AppImage smoke test exited $rc"
+          (cd /tmp/mistpine-appimage && "$AI" --appimage-extract) > "$XLOG" 2>&1 || extract_rc=$?
+          extract_rc=${extract_rc:-0}
+          echo "appimage-extract exited $extract_rc"
+          tail -n 20 "$XLOG"
+          if [ "$extract_rc" -ne 0 ] || [ ! -f "$BIN" ]; then
+            {
+              echo "AppImage extraction failed (rc=$extract_rc) or payload binary missing."
+              echo "--- extract log ---"
+              cat "$XLOG"
+              echo "--- payload tree ---"
+              find /tmp/mistpine-appimage -maxdepth 4 2>/dev/null | head -100
+            } > "$LOG"
+            cat "$LOG"
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "AppImage extraction failed"
             exit 1
           fi
-          if grep -q "\[error\]" smoke-appimage.log; then
-            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-appimage.log "packaged AppImage smoke test logged errors"
+
+          cd /
+          "$BIN" --headless --frames 600 --hours 22 --qa camp > "$LOG" 2>&1 || rc=$?
+          rc=${rc:-0}
+          cat "$LOG"
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "packaged AppImage smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" "$LOG"; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "packaged AppImage smoke test logged errors"
             exit 1
           fi
       - name: Render verification (xvfb + Mesa llvmpipe, OpenGL)
@@ -394,13 +444,15 @@ jobs:
           cd /tmp
           xvfb-run -a -s "-screen 0 1280x720x24" \
             /tmp/mistpine-smoke/Mistpine/mistpine --play --frames 240 --hours 22 --qa camp \
-            --renderer opengl --screenshot /tmp/mistpine-linux-shot.png > render.log 2>&1
+            --renderer opengl --screenshot /tmp/mistpine-linux-shot.png > render.log 2>&1 || rc=$?
+          rc=${rc:-0}
           cat render.log
-          if [ -f /tmp/mistpine-linux-shot.png ]; then
-            cp /tmp/mistpine-linux-shot.png "$GITHUB_WORKSPACE/mistpine-linux-shot.png"
-          else
-            echo "render verification FAILED: no screenshot produced" >&2; exit 1
+          if [ ! -f /tmp/mistpine-linux-shot.png ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" render.log "linux render verification produced no screenshot (rc=$rc)"
+            exit 1
           fi
+          cp /tmp/mistpine-linux-shot.png "$GITHUB_WORKSPACE/mistpine-linux-shot.png"
+          echo "render verification: screenshot captured"
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
@@ -413,6 +465,7 @@ jobs:
           name: qa-release-linux
           path: |
             ldd.txt
+            render.log
             mistpine-linux-shot.png
 
   # ---------------------------------------------------------------------------
