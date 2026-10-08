@@ -22,6 +22,11 @@ name: release
 # -----------------------------------------------------------------------------
 
 on:
+  # Dry run / real release by pushing a tag (v0.1.0-rc for a dry run, v0.1.0 to publish).
+  # Tag pushes always use this workflow file from the pushed ref, so a dry run can be
+  # started before merge, and the real release after it.
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
@@ -40,7 +45,7 @@ env:
   EMSDK_VERSION: 4.0.11
 
 concurrency:
-  group: release-${{ inputs.tag }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -55,10 +60,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.sha || github.ref }}
       - name: Version
         run: |
           TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "DRY_RUN=$([ "$TAG" = "v0.1.0" ] && echo false || echo true)" >> "$GITHUB_ENV"
@@ -74,11 +80,11 @@ jobs:
       - name: Configure web-release
         run: |
           EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "web-release configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "web-release configure failed"; exit 1; }
       - name: Build web-release
         run: |
           cmake --build --preset web-release > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "web-release build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "web-release build failed"; exit 1; }
       - name: Package web zip
         run: |
           mkdir -p "pkg/mistpine"
@@ -89,11 +95,11 @@ jobs:
       - name: Configure web-singlefile
         run: |
           EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-singlefile > /tmp/cfg2.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg2.log "web-singlefile configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg2.log "web-singlefile configure failed"; exit 1; }
       - name: Build web-singlefile
         run: |
           cmake --build --preset web-singlefile > /tmp/build2.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build2.log "web-singlefile build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build2.log "web-singlefile build failed"; exit 1; }
           ls -la build/web-singlefile/src/app/
       - name: Collect single-file HTML
         run: |
@@ -114,12 +120,12 @@ jobs:
         run: |
           cd tools/browser && node playtest.mjs --dir ../../pkg/mistpine --out ../../qa/release-web \
             --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/qa1.log 2>&1 ||
-            { tail -c 8000 /tmp/qa1.log; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/qa1.log "release browser QA (web over HTTP) failed"; exit 1; }
       - name: Browser QA (single-file HTML over file://)
         run: |
           cd tools/browser && node playtest.mjs --file "../../mistpine-v${VERSION}-web-singlefile.html" \
             --out ../../qa/release-singlefile --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/qa2.log 2>&1 ||
-            { tail -c 8000 /tmp/qa2.log; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/qa2.log "release browser QA (single-file over file://) failed"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: release-web
@@ -147,10 +153,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.sha || github.ref }}
       - name: Version
         run: |
           TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Host tools (shaderc, MSVC — also emits the dx11 shader profile)
@@ -162,11 +169,11 @@ jobs:
       - name: Configure native-release
         run: |
           cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "windows configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "windows configure failed"; exit 1; }
       - name: Build native-release
         run: |
           cmake --build --preset native-release > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "windows build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "windows build failed"; exit 1; }
       - name: Package zip
         run: |
           mkdir -p pkg/Mistpine
@@ -223,10 +230,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.sha || github.ref }}
       - name: Version
         run: |
           TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - run: |
@@ -242,11 +250,11 @@ jobs:
       - name: Configure native-release
         run: |
           cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "linux configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "linux configure failed"; exit 1; }
       - name: Build native-release
         run: |
           cmake --build --preset native-release > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "linux build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "linux build failed"; exit 1; }
       - name: Package tar.gz
         run: |
           mkdir -p pkg/Mistpine
@@ -337,10 +345,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.sha || github.ref }}
       - name: Version
         run: |
           TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Host tools (shaderc — also emits the metal shader profile)
@@ -350,11 +359,11 @@ jobs:
       - name: Configure native-release
         run: |
           cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "macos configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "macos configure failed"; exit 1; }
       - name: Build native-release
         run: |
           cmake --build --preset native-release > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "macos build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "macos build failed"; exit 1; }
       - name: Package Mistpine.app
         run: |
           rm -rf Mistpine.app
@@ -432,10 +441,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.sha || github.ref }}
       - name: Version
         run: |
           TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v4
@@ -487,7 +497,7 @@ jobs:
   publish:
     name: Publish draft release v0.1.0
     needs: [checksums]
-    if: ${{ inputs.tag == 'v0.1.0' }}
+    if: ${{ (inputs.tag || github.ref_name) == 'v0.1.0' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -495,7 +505,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ inputs.sha || github.ref }}
       - name: Download all release assets
         run: |
           mkdir -p dist
