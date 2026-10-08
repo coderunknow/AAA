@@ -1,0 +1,1981 @@
+# Mistpine v0.1.0 — stability, graphics, animation and instant-run release
+
+You are a senior C++ graphics and engine engineer working as an autonomous coding agent in the repository `coderunknow/AAA`.
+
+Your mission is to take **Mistpine** from the current merged vertical slice to a **verified, tagged GitHub Release `v0.1.0`**.
+
+The release must:
+
+* be materially more stable;
+* look clearly better;
+* have real procedural character and wolf animation;
+* provide web and portable desktop artifacts;
+* allow every shipped artifact to start immediately after download, with no build step and no installation step;
+* preserve the existing gameplay scope;
+* be supported by concrete verification evidence rather than assumptions.
+
+Work at maximum effort, but do not rush. Prefer a smaller, verified implementation over a larger speculative rewrite. Do not claim something is working unless the available evidence supports that claim.
+
+---
+
+# 1. Mission and definition of done
+
+The final result is `Mistpine v0.1.0`.
+
+A successful release has all of the following properties:
+
+1. The existing vertical-slice gameplay remains intact.
+2. Release-critical native portability problems are fixed.
+3. Web and native builds use the same in-engine UI where required.
+4. Player and wolf use procedural skinned meshes and real procedural animation.
+5. The graphics pass produces a clearly visible improvement without sacrificing release stability.
+6. Windows x64, Linux x86_64 and macOS arm64 release artifacts are built successfully and pass their required runner-side checks.
+7. The web build works on a static host.
+8. The single-file web build launches from `file://` in Chrome.
+9. Native assets are found when the executable is launched from a working directory different from the build directory.
+10. Existing v3 saves remain loadable.
+11. CI is green for the release-critical checks.
+12. The pull request is fully verified before merge.
+13. The agent **must not merge until the owner explicitly approves the merge**.
+14. No release is published with a missing, unverified or known-broken required asset.
+
+Do not optimize for the number of changed lines. Optimize for a stable, visually improved and genuinely shippable release.
+
+---
+
+# 2. Owner decisions — already decided, do not re-ask
+
+These decisions are final for v0.1.0 unless a genuine contradiction is discovered.
+
+## Release artifacts
+
+Ship:
+
+* GitHub Pages web build;
+* portable Windows x64 `.zip`;
+* portable Linux x86_64 AppImage;
+* Linux `.tar.gz` companion archive;
+* portable macOS arm64 `.zip` containing `Mistpine.app`;
+* single-file web HTML;
+* `SHA256SUMS.txt`.
+
+The desktop artifacts must be runnable after extraction/opening, without a separate installer.
+
+## Animation
+
+Use:
+
+**Procedural skinned meshes.**
+
+Generate a smooth skinned body and skeleton in code, with:
+
+* procedural gait;
+* foot IK;
+* secondary motion;
+* smooth state transitions.
+
+Assets remain generated in code and must have clean provenance.
+
+Both the **player and wolf** must use the new skinned system in the final release.
+
+## Graphics
+
+Use:
+
+**Balanced cinematic pass.**
+
+Prioritize, by visual impact:
+
+1. atmosphere;
+2. lighting / shafts / bloom / AO;
+3. forest and tree crowns;
+4. terrain materials;
+5. colour grading;
+6. character presentation.
+
+## Scope
+
+Freeze gameplay.
+
+This release is for:
+
+**stability + visuals + animation + release engineering.**
+
+Do not add new gameplay systems.
+
+The in-engine UI and desktop settings are allowed because native builds otherwise lack the existing DOM UI and URL-driven configuration.
+
+## Environment
+
+Use the Arena Agent Mode environment described in §5.
+
+## Existing design decisions
+
+From the existing design log:
+
+* Setting: misty East-Asian mountain forest.
+* High preset target: integrated-laptop-GPU class, approximately Iris Xe / Apple M1.
+* Assets are procedural and documented in `docs/ASSETS.md`.
+* Danger comes from the environment and avoidable predators.
+* There is no combat.
+
+---
+
+# 3. Agent operating rules
+
+## 3.1 Verify before relying on ground truth
+
+The repository state below is a starting point, not an excuse to skip verification.
+
+Before making release-critical decisions, re-check the relevant repository state.
+
+If current code contradicts this prompt, inspect the code and CI evidence first.
+
+Do not blindly preserve stale assumptions.
+
+## 3.2 Preserve the owner's intent, not a guessed implementation
+
+The requirements below specify outcomes and important technical constraints.
+
+Unless a particular implementation is explicitly required, choose the simplest technically sound implementation that satisfies the requirements.
+
+Do not create unnecessary abstractions, engines, frameworks, rendering subsystems or generalized infrastructure merely because they could be useful later.
+
+In particular:
+
+* do not create a general-purpose UI framework;
+* do not replace the existing engine architecture;
+* do not introduce another rendering engine;
+* do not redesign unrelated gameplay systems;
+* do not rewrite working systems without a release-relevant reason.
+
+## 3.3 Scope discipline
+
+Do not add new gameplay mechanics.
+
+Do not expand the feature set because an implementation becomes inconvenient.
+
+When implementation complexity threatens release stability:
+
+1. preserve the stable path;
+2. defer the lowest-impact visual item if necessary;
+3. record the deferral and reason in `DESIGN_LOG.md`;
+4. continue toward the release gate.
+
+Do not silently drop requirements.
+
+## 3.4 Evidence discipline
+
+Always distinguish among:
+
+* implemented;
+* compiled;
+* linked;
+* built;
+* launched;
+* tested;
+* visually inspected;
+* benchmarked;
+* verified in CI.
+
+These are different claims.
+
+Examples:
+
+* A successful CMake build is not proof that a platform launches.
+* A successful headless smoke test is not proof of visual correctness.
+* A CI artifact existing is not proof that it was visually inspected.
+* A SwiftShader frame time is not real-GPU performance.
+* A successful shader compilation is not proof that a renderer actually uses that shader at runtime.
+
+Never invent FPS or hardware results.
+
+Never claim WebGPU. The web renderer is bgfx's WebGL2 / OpenGLES backend.
+
+Never claim a platform works unless the required build/run evidence exists.
+
+## 3.5 Contradictions
+
+If you discover a contradiction:
+
+1. verify it against the repository, CI configuration and available evidence;
+2. determine whether it materially affects release scope, architecture, compatibility, correctness or an owner decision.
+
+For a **material contradiction**, stop at that point and ask the owner.
+
+For a minor editorial, documentation or stale-reference inconsistency that does not affect scope, architecture, compatibility or correctness:
+
+* resolve it conservatively;
+* record what was found;
+* continue.
+
+Do not invent a new owner decision to resolve a material contradiction.
+
+## 3.6 Design log
+
+Before each task, read `DESIGN_LOG.md` in full and compare it with the current repository.
+
+The log is append-only.
+
+Entries use:
+
+`### #N — date — INTENT|DECISION|DONE|CONTRADICTION|NOTE`
+
+Before implementation:
+
+* append `#9` as an `INTENT` entry containing the owner decisions from §2.
+
+At the end:
+
+* append a `DONE` entry containing verified results only.
+
+If a material contradiction is found:
+
+* append the appropriate `CONTRADICTION` entry before stopping to ask the owner.
+
+Do not rewrite historical entries.
+
+Do not fabricate verification results.
+
+---
+
+# 4. Verified starting point
+
+The following was checked on 2026-10-08 and must be re-verified before relying on it:
+
+* `main` = `50bc31b`, merge of PR #1.
+* 158 tracked files.
+* approximately 11.4k lines of C++, shaders, tests and tooling.
+* no tags or releases yet.
+
+## Stack
+
+* C++20
+* bgfx via bgfx.cmake
+* bgfx pinned commit in `cmake/Dependencies.cmake`
+* SDL3 `release-3.4.18`
+* Emscripten 4.0.11
+* CMake >= 3.24
+* CMake presets
+* Ninja
+* JavaScript only in `web/shell.html`
+
+## Modules
+
+* `src/core`
+* `world`
+* `procgen`
+* `game`
+* `audio`
+* `render`
+* `platform`
+* `app`
+
+Shaders:
+
+`shaders/*.sc`
+
+Tests:
+
+`tests/`
+
+Browser QA harness:
+
+`tools/browser/playtest.mjs`
+
+## CMake presets
+
+* `tools`
+* `native-dev`
+* `native-headless`
+* `web-dev`
+* `web-release`
+* `web-profile`
+
+`scripts/build.sh` runs them in order.
+
+## CI
+
+`.github/workflows/ci.yml` contains:
+
+* tools / shaderc
+* native unit + smoke
+* native-windowed compile
+* web
+* Pages deployment
+
+The first known CI run on `main`:
+
+`37643195688`
+
+was still running when the previous session ended.
+
+Its result is unknown and must be checked first.
+
+## Last known sandbox verification
+
+* 42/42 unit tests passed.
+* CTest native-headless passed 4/4:
+
+  * unit suite;
+  * day smoke;
+  * night + campfire;
+  * night + wolves.
+* web-release built successfully;
+* wasm was approximately 1.8 MB at that time;
+* web build launched with 0 console errors;
+* browser save round trip worked;
+* software rendering was approximately 1 FPS in the sandbox.
+
+The last point is **not** a hardware-performance measurement.
+
+---
+
+# 5. Known gaps to investigate and resolve
+
+These were previously verified from the code.
+
+## 5.1 Native shader portability
+
+`Renderer::init` currently allows native bgfx backend selection through `RendererType::Count`.
+
+`cmake/Shaders.cmake` only compiles:
+
+* `glsl`
+* `spirv`
+* `essl`
+
+and `src/render/shader_library.cpp` maps unsupported backends to `essl`.
+
+Native Windows and macOS therefore require real backend-specific shader handling.
+
+## 5.2 Native asset path
+
+`AAA_ASSET_DIR` is currently an absolute build directory baked into the build.
+
+A packaged binary cannot rely on that path.
+
+## 5.3 Native UI
+
+Existing title, pause, HUD, prompts and notifications are DOM-only.
+
+Native builds need an in-engine equivalent.
+
+## 5.4 bgfx threading
+
+`bgfx::renderFrame()` is currently not called before `bgfx::init`.
+
+Native bgfx therefore defaults to multithreaded mode.
+
+The release should use deterministic single-threaded rendering by explicitly calling `bgfx::renderFrame()` before initialization.
+
+## 5.5 Visual quality
+
+Current character and wolf visuals are rigid procedural parts.
+
+Known environmental issues include:
+
+* flat pine crowns when viewed from below;
+* overly lime-looking grass;
+* flat distant mountains.
+
+## 5.6 Stale documentation
+
+`tools/sandbox/bootstrap_toolchain.sh` references files that no longer exist.
+
+The browser playtest `default` script presses F3 while the debug overlay now requires `?debug=1`.
+
+## 5.7 Console noise
+
+bgfx emits approximately 20 WebGL `INVALID_ENUM: getInternalformatParameter` messages during startup.
+
+SDL3 uses a deprecated `ScriptProcessorNode`.
+
+These are currently harmless.
+
+Do not patch bgfx merely to hide the WebGL warning unless a robust project-local solution exists.
+
+---
+
+# 6. Arena environment facts and required workarounds
+
+## Machine
+
+* 2 CPU cores
+* approximately 3.8 GiB RAM
+* no GPU
+* no sudo
+
+Network is restricted.
+
+Available:
+
+* `github.com`
+* `codeload.github.com`
+* `api.github.com`
+* PyPI
+* npm
+
+Blocked:
+
+* `storage.googleapis.com`
+* `objects.githubusercontent.com`
+* `raw.githubusercontent.com`
+* `*.github.io`
+
+Therefore:
+
+* do not attempt to download release assets or CI artifacts into the sandbox;
+* do not claim local inspection of an inaccessible artifact;
+* inspect GitHub release metadata with `gh release view --json assets`;
+* inspect CI logs and job results through GitHub.
+
+## Toolchain bootstrap
+
+`tools/sandbox/bootstrap_toolchain.sh` builds:
+
+* Emscripten 4.0.11
+* Binaryen 123
+* clang 21 from the Zig 0.16 wheel
+
+It writes an environment file.
+
+After bootstrap:
+
+```bash
+source ~/.cache/aaa-toolchain/env.sh
+```
+
+Without this environment file, `cmake` may not be on `PATH`.
+
+## Dependencies
+
+Clone once into:
+
+`~/.cache/aaa-deps/`
+
+Required:
+
+* bgfx.cmake with submodules;
+* SDL3 at the pinned tag.
+
+Use:
+
+```bash
+-DFETCHCONTENT_SOURCE_DIR_BGFX_CMAKE=$HOME/.cache/aaa-deps/bgfx.cmake
+-DFETCHCONTENT_SOURCE_DIR_SDL3=$HOME/.cache/aaa-deps/SDL3
+-DFETCHCONTENT_FULLY_DISCONNECTED=ON
+```
+
+## Shaderc
+
+Shaderc may take about 30 minutes on 2 cores.
+
+Run the long shaderc build using `start_process` rather than a blocking bash invocation.
+
+Run independent long prerequisites in parallel when safe.
+
+## Unit tests
+
+Known command:
+
+```bash
+cmake --build build/unit -j2 &&
+./build/unit/tests/aaa_tests | grep -E "FAIL|tests,"
+```
+
+Avoid output flooding from repetitive aggregate checks.
+
+## Browser QA
+
+From `tools/browser`:
+
+```bash
+timeout 600 node playtest.mjs \
+  --dir ../../build/web-release/src/app \
+  --out ../../qa/runN \
+  --query "hours=9&quality=low" \
+  --script still \
+  --width 960 \
+  --height 540
+```
+
+Scripts:
+
+* `default`
+* `still`
+* `persist`
+
+Use `web-release` and `quality=low` in the sandbox because debug WASM is too slow under SwiftShader.
+
+`@sparticuz/chromium` may require manual extraction of `al2023.tar.br` for `libnspr4`.
+
+## Native windowed runs
+
+The Arena sandbox cannot run native windowed rendering because it lacks an X/GL environment.
+
+Therefore native render verification must happen in GitHub Actions.
+
+## bgfx revision facts
+
+Relevant known quirks:
+
+* window initialization uses `Init::swapChain {nwh, ndt, width, height}`;
+* resize uses `bgfx::reset(flags, const SwapChain*)`;
+* there is no `INSTANCING` or `COMPARE` caps bit;
+* `createProgram` requires the VS output hash to equal the FS input hash;
+* samplers must not be passed as function parameters in `.sc`;
+* comments must not be placed on `$output` lines;
+* the post/tonemap pass must write alpha = 1 or the WebGL canvas becomes transparent.
+
+## Sandbox recycling
+
+The sandbox can recycle between turns, wiping:
+
+* `~/.cache`
+* `build/`
+* `node_modules`
+
+and may leave the session branch at the initial commit with files appearing untracked.
+
+At the beginning of every turn:
+
+```bash
+git fetch origin main && git ls-remote origin <session-branch>
+
+GIT_INDEX_FILE=/tmp/cmp git read-tree origin/main &&
+GIT_INDEX_FILE=/tmp/cmp git diff-files --stat
+```
+
+Never use `git read-tree` or `git reset --hard` against the real index or worktree merely to inspect state.
+
+If the tree matches and the branch pointer needs to be corrected:
+
+```bash
+git reset --mixed origin/main
+```
+
+Do not destroy working files.
+
+## GitHub transient failures
+
+GitHub write operations may return transient HTTP 500s.
+
+Retry with backoff.
+
+Do not rewrite history in panic.
+
+Work only on the assigned session branch.
+
+Do not push unrelated refs.
+
+## Review bots
+
+Kilo, Qodo, Copilot and CodeRabbit may be billing-blocked or skipped.
+
+Their output can be read for useful information but must not be treated as authoritative code correctness evidence.
+
+---
+
+# 7. Phase 0 — orient before changing code
+
+No code changes before this phase is substantially complete.
+
+## 7.1 Repository state
+
+Verify:
+
+* current branch;
+* working tree;
+* current commit;
+* comparison with `origin/main`;
+* assigned session branch;
+* whether sandbox recycling occurred.
+
+Do not destroy existing intended work.
+
+## 7.2 Read the key documentation
+
+Read in full:
+
+* `DESIGN_LOG.md`
+* `README.md`
+* `docs/ASSETS.md`
+
+Also inspect the relevant build and CI files.
+
+## 7.3 Check CI first
+
+Run:
+
+```bash
+gh run view 37643195688
+gh run list
+```
+
+If any job failed:
+
+1. inspect the logs;
+2. identify the root cause;
+3. treat the CI failure as the first release task;
+4. fix it before moving on.
+
+Specifically verify that the web job actually uses Emscripten 4.0.11.
+
+Do not assume `mymindstorm/setup-emsdk` exports `EMSDK` the way the workflow expects.
+
+## 7.4 Check GitHub Pages
+
+Check:
+
+```bash
+gh api repos/coderunknow/AAA/pages
+```
+
+If Pages is disabled, attempt:
+
+```bash
+gh api -X POST repos/coderunknow/AAA/pages -f build_type=workflow
+```
+
+If that returns 403, report the blocker to the owner, because repository settings cannot be changed from the sandbox, but continue with all work that does not depend on Pages.
+
+## 7.5 Start long prerequisites
+
+Start independent long-running prerequisites as early as practical:
+
+* toolchain bootstrap;
+* dependency setup;
+* shaderc build.
+
+Do not block useful investigation while waiting for a long independent process.
+
+## 7.6 Append DESIGN_LOG #9
+
+Append the owner decisions from §2 as an `INTENT` entry.
+
+Then begin implementation.
+
+---
+
+# 8. Milestone M1 — stability and cross-platform correctness
+
+M1 is release-critical.
+
+Do not start a later milestone while M1 has unresolved release-critical failures.
+
+## 8.1 Shader profiles
+
+Extend `cmake/Shaders.cmake` and `src/render/shader_library.cpp`.
+
+Required mappings:
+
+* Web: `essl`
+* Linux OpenGL: `glsl`
+* Linux Vulkan: `spirv`
+* Windows D3D11: `dx11`
+* macOS Metal: `metal`
+
+Windows:
+
+* use `--platform windows -p s_5_0`;
+* compile using the Windows runner if the pinned shader compiler cannot produce the required profile from Linux.
+
+macOS:
+
+* use `--platform osx -p metal`.
+
+Map every `bgfx::RendererType` explicitly.
+
+If a profile is missing:
+
+* fail clearly;
+* do not silently fall back to `essl`.
+
+## 8.2 Backend selection
+
+Preferred order:
+
+### Windows
+
+D3D11 → Vulkan → OpenGL
+
+### macOS
+
+Metal
+
+### Linux
+
+OpenGL → Vulkan
+
+### Web
+
+OpenGLES / WebGL2
+
+Log the backend actually selected.
+
+Add:
+
+```text
+--renderer d3d11
+--renderer vulkan
+--renderer opengl
+--renderer metal
+--renderer noop
+```
+
+The implementation may choose its own clean fallback architecture as long as the observable behaviour matches the requirements.
+
+## 8.3 bgfx threading
+
+Call:
+
+```cpp
+bgfx::renderFrame()
+```
+
+before `bgfx::init()` on every platform so rendering uses deterministic single-threaded mode.
+
+Do not change this requirement merely because another threading model appears faster.
+
+## 8.4 Portable asset lookup
+
+Remove reliance on the absolute compile-time `AAA_ASSET_DIR` for packaged builds.
+
+Default asset discovery:
+
+* executable base path + `assets/`;
+* macOS bundle: `Contents/Resources/assets`.
+
+Keep:
+
+```text
+--assets <path>
+```
+
+as an explicit override.
+
+A packaged build must find its assets when launched from a different current working directory.
+
+This must be tested explicitly.
+
+## 8.5 Native UI
+
+Implement a **minimal in-engine UI layer** using C++/bgfx.
+
+Do not build a general-purpose UI framework.
+
+Use an SDF font atlas based on an OFL-compatible font.
+
+Use `stb_truetype` only if required and ensure its licensing/provenance is recorded in `docs/ASSETS.md`.
+
+The in-engine UI must reproduce the existing web-facing UI:
+
+* title;
+* pause screen;
+* HUD;
+* prompts;
+* notifications;
+* Continue;
+* Start a new journey;
+* two-click confirmation.
+
+Preserve the existing visual character:
+
+* serif;
+* quiet vitals that fade while healthy;
+* italic toasts;
+* restrained presentation.
+
+Add a minimal Settings section to pause:
+
+* quality;
+* master volume;
+* mouse sensitivity;
+* invert Y;
+* fullscreen on native.
+
+Settings must persist across restart using the existing save/settings mechanism.
+
+This Settings screen is configuration UI, not a new gameplay system.
+
+The DOM must retain only:
+
+* loading;
+* fatal/error messaging;
+* WebGL2 unsupported messaging.
+
+Keep:
+
+```javascript
+window.__mistpineReady
+```
+
+and add:
+
+```javascript
+window.__mistpineState
+```
+
+as a JSON snapshot containing enough information for the browser harness to assert UI state, including phase/menu/vitals.
+
+## 8.6 Timing
+
+Use:
+
+* fixed-step simulation at 60 Hz;
+* render interpolation;
+* stable animation/camera smoothing independent of render frame rate;
+* hitch clamping.
+
+Preserve pause-on-focus-loss behaviour.
+
+## 8.7 Robustness
+
+Handle:
+
+* WebGL context loss;
+* resize;
+* HiDPI;
+* missing audio device;
+* audio device loss;
+* localStorage quota errors;
+* `SecurityError` / browser persistence restrictions;
+* unwritable native preference paths.
+
+If persistence is unavailable:
+
+* tell the player once;
+* continue running when safe to do so.
+
+The single-file web build must remain playable even when browser persistence is unavailable under `file://`.
+
+Do not falsely claim save persistence for a browser/environment that has rejected the storage API.
+
+## 8.8 Save safety
+
+Existing v3 saves must load.
+
+Only bump to v4 if technically necessary.
+
+If v4 is required:
+
+* implement migration;
+* validate;
+* test old v3 saves;
+* test malformed/corrupt data.
+
+Add a corrupt-save fuzz test:
+
+* start from a valid save;
+* mutate it randomly;
+* ensure the parser never crashes;
+* ensure a defined success/failure result is returned.
+
+## 8.9 CI hardening
+
+For project targets:
+
+* zero warnings under existing warning flags;
+* `-Werror` on GCC/Clang/em++;
+* `/WX` for MSVC.
+
+Do not apply project warning policies to third-party code.
+
+Add an ASan + UBSan job covering:
+
+* unit tests;
+* appropriate native smoke runs.
+
+Compile every required shader profile in CI.
+
+Add:
+
+```text
+--version
+```
+
+Make:
+
+```cmake
+project(... VERSION 0.1.0)
+```
+
+the single source of truth.
+
+Expose the version in:
+
+* logs;
+* title screen.
+
+## 8.10 Documentation
+
+Fix stale documentation references.
+
+Update browser QA scripts for the new in-engine UI.
+
+### M1 exit gate
+
+Before M1 is complete:
+
+* relevant local tests are green;
+* relevant CI checks are green or their failure is understood and being fixed;
+* native asset lookup is tested;
+* UI builds successfully;
+* v3 saves load;
+* warnings-as-errors pass for project code;
+* no known release-critical M1 failure remains.
+
+Commit and push the M1 changes before starting the next milestone.
+
+---
+
+# 9. Milestone M2 — release pipeline and instant-run verification
+
+Create:
+
+```text
+.github/workflows/release.yml
+```
+
+The workflow must be able to build from an explicit commit SHA.
+
+It must support a dry-run mode that does not upload final release assets.
+
+For the final release, produce exactly these required assets:
+
+| Asset                                   | Production                  | Requirement                      |
+| --------------------------------------- | --------------------------- | -------------------------------- |
+| `mistpine-v0.1.0-web.zip`               | web-release output          | works on a static host           |
+| `mistpine-v0.1.0-web-singlefile.html`   | dedicated single-file build | opens directly via `file://`     |
+| `mistpine-v0.1.0-windows-x64.zip`       | Windows x64 package         | unzip → `Mistpine.exe`           |
+| `mistpine-v0.1.0-linux-x86_64.AppImage` | Linux x86_64                | `chmod +x` → run                 |
+| `mistpine-v0.1.0-linux-x86_64.tar.gz`   | Linux package               | extract → run                    |
+| `mistpine-v0.1.0-macos-arm64.zip`       | macOS arm64 app bundle      | unzip → open                     |
+| `SHA256SUMS.txt`                        | checksums                   | covers every other release asset |
+
+Do not include a checksum for `SHA256SUMS.txt` itself unless the release specification is deliberately changed.
+
+## 9.1 Single-file web build
+
+Build separately using:
+
+* `-sSINGLE_FILE=1`;
+* embedded assets using Emscripten's embedded-file mechanism;
+* no dependency on an external web server.
+
+The single-file build must launch from:
+
+```text
+file://
+```
+
+in Chrome.
+
+It must provide normal gameplay.
+
+Persistence may legitimately be unavailable if the browser rejects local storage under `file://`; in that case:
+
+* the game remains playable;
+* the player is informed once;
+* no false claim of persistence is made.
+
+## 9.2 Windows
+
+Build with:
+
+* `windows-2022`;
+* MSVC;
+* Ninja;
+* static CRT via `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`;
+* `WIN32_EXECUTABLE`;
+* D3D11 primary backend.
+
+Package so that extraction alone is sufficient.
+
+## 9.3 Linux
+
+Build on:
+
+`ubuntu-22.04`
+
+to maximize glibc compatibility.
+
+Use static SDL3 where appropriate with runtime-loaded X11/Wayland support.
+
+Produce:
+
+* AppImage;
+* `.tar.gz`.
+
+## 9.4 macOS
+
+Build:
+
+* `macos-14`;
+* arm64;
+* Metal.
+
+Package:
+
+`Mistpine.app`
+
+Use an `Info.plist` containing:
+
+* version;
+* `NSHighResolutionCapable`.
+
+Apply ad-hoc signing:
+
+```bash
+codesign --force --deep -s -
+```
+
+Do not claim notarization.
+
+Release notes must explain the first-run Gatekeeper flow:
+
+* right-click → Open;
+* or System Settings → Privacy & Security → Open Anyway.
+
+## 9.5 Optional macOS x86_64 / universal
+
+Only add this if it builds cleanly.
+
+Do not destabilize the arm64 release merely to obtain another architecture.
+
+## 9.6 Dependency audits
+
+Every runner must perform the relevant dependency audit.
+
+### Windows
+
+Use:
+
+```text
+dumpbin /dependents
+```
+
+and verify no unexpected non-system runtime dependency remains.
+
+### Linux
+
+Use:
+
+```text
+ldd
+```
+
+and verify no unexpected SDL or non-system `.so` dependency remains.
+
+### macOS
+
+Use:
+
+```text
+otool -L
+```
+
+and verify only expected system frameworks/libraries are used.
+
+## 9.7 Packaged-binary smoke test
+
+On each platform:
+
+Run the packaged binary from a current working directory different from the package/build directory.
+
+Use the equivalent of:
+
+```text
+--headless --frames 600 --hours 22 --qa camp
+```
+
+The packaged application must:
+
+* exit successfully;
+* find its assets;
+* emit no `ERROR`-level failures.
+
+## 9.8 Real render verification
+
+Where the GitHub runner permits it:
+
+### Linux
+
+Use:
+
+* `xvfb-run`;
+* Mesa llvmpipe;
+* OpenGL backend.
+
+Add:
+
+```text
+--screenshot out.png
+```
+
+using bgfx screenshot support.
+
+Upload the screenshot as a CI artifact.
+
+### Windows / macOS
+
+Attempt the corresponding render verification.
+
+If the runner cannot provide usable render evidence:
+
+* do not fabricate it;
+* report exactly what was and was not verified.
+
+## 9.9 Browser CI
+
+Run browser QA against:
+
+1. normal web build;
+2. single-file HTML using `file://`.
+
+Require:
+
+* 0 console errors;
+* title appears;
+* expected readiness/state hooks work.
+
+Update:
+
+`tools/browser/launch.mjs`
+
+to support:
+
+```text
+CHROME_PATH
+```
+
+as an executable override.
+
+Add a `--file` mode that skips the HTTP server.
+
+## 9.10 CI artifact visual evidence
+
+CI screenshots are evidence of artifact generation.
+
+They are **not automatically evidence of visual inspection**.
+
+Because the Arena sandbox cannot retrieve blocked CI artifacts:
+
+* inspect equivalent/local screenshots in the sandbox whenever possible;
+* use CI screenshots as supplemental evidence;
+* never label a screenshot “visually inspected” unless it was actually inspected.
+
+## 9.11 Dry-run requirement
+
+The release workflow must be runnable as a dry run against the PR head before merge.
+
+The dry run must exercise the real release build logic and checks without uploading the final v0.1.0 assets.
+
+### M2 exit gate
+
+The dry-run release workflow must prove that the required packaging pipeline is viable before merge.
+
+Commit and push M2 changes.
+
+---
+
+# 10. Milestone M3 — procedural skinned player and wolf animation
+
+Both player and wolf must use the new procedural skinned system.
+
+Retire the rigid-part path from the final render path once the new implementation reaches parity.
+
+## 10.1 Skeletons
+
+Player:
+
+approximately 22 joints, including:
+
+* pelvis;
+* spine chain;
+* neck;
+* head;
+* clavicles;
+* upper/lower arms;
+* hands;
+* thighs;
+* calves;
+* feet;
+* toes.
+
+Wolf:
+
+approximately 26 joints, including:
+
+* spine chain;
+* neck;
+* head;
+* jaw;
+* four three-segment legs;
+* tail chain.
+
+The exact final joint count may vary slightly if the visual and animation requirements are met cleanly.
+
+Do not add joints merely to increase complexity.
+
+## 10.2 Meshes
+
+Generate smooth skinned geometry in code.
+
+Possible techniques include swept/blended capsules or another suitable procedural representation.
+
+The final geometry must have:
+
+* normals;
+* UVs where needed;
+* normalized skin weights;
+* at most four influences per vertex.
+
+Generate and cache meshes once per quality level during loading rather than rebuilding them every frame.
+
+## 10.3 Player presentation
+
+Support layered procedural clothing:
+
+* jacket;
+* trousers;
+* wrap;
+* straw hat;
+* backpack.
+
+Rigidly attached accessories are acceptable where skinning is unnecessary.
+
+## 10.4 Wolf presentation
+
+Use procedural fur cues.
+
+Higher quality may include shell/fin-style hints if they materially improve the look within the performance budget.
+
+Do not sacrifice stability for elaborate fur.
+
+## 10.5 GPU skinning
+
+Add dedicated skinned shaders, including shadow support.
+
+Use a joint palette within WebGL2 limits.
+
+Ensure shader interfaces obey the pinned bgfx/shader compiler constraints.
+
+## 10.6 Procedural locomotion
+
+Player:
+
+* speed-driven gait phase;
+* stride/cadence relationship;
+* pelvis bob and sway;
+* counter-rotating arm swing;
+* acceleration lean;
+* turning lean.
+
+## 10.7 Foot IK
+
+Use two-bone IK.
+
+Required behaviour:
+
+* adapt feet to terrain;
+* plant feet during stance;
+* avoid visible sliding;
+* adjust pelvis height for slope.
+
+## 10.8 Player states
+
+Implement:
+
+* idle breathing;
+* idle weight shifts;
+* crouch;
+* jump;
+* landing squash;
+* wading;
+* gather interaction;
+* kneeling at the fire;
+* drinking;
+* shivering when cold.
+
+Transitions must be blended.
+
+## 10.9 Look-at
+
+Player head orientation should respond plausibly to:
+
+* points of interest;
+* camera direction.
+
+Avoid unnatural snapping.
+
+## 10.10 Wolf animation
+
+Support:
+
+* walk;
+* trot;
+* lope;
+* spine flex;
+* ear spring;
+* tail spring chain;
+* crouch-stalk;
+* flee.
+
+## 10.11 Transition quality
+
+Use cross-fade or equivalent interpolation.
+
+No visible pose popping.
+
+## 10.12 Required tests
+
+Test:
+
+* skin weights sum to 1;
+* no more than four influences;
+* bind pose reproduces the rest mesh;
+* IK solver converges;
+* IK respects joint limits;
+* foot drift remains below approximately 2 cm during stance at walk/run speeds on flat ground and slopes;
+* no unacceptable pose discontinuity across state transitions;
+* no NaNs during long randomized input runs.
+
+Keep:
+
+```text
+?qa=character
+```
+
+as a close-up character screenshot scenario.
+
+### M3 exit gate
+
+Both player and wolf use the new skinned pipeline in the final rendering path.
+
+Animation tests pass.
+
+No known NaN, IK instability or major transition artifact remains.
+
+Commit and push M3.
+
+---
+
+# 11. Milestone M4 — balanced cinematic graphics pass
+
+The purpose of M4 is high visual impact per unit of implementation complexity.
+
+Do not turn M4 into an engine rewrite.
+
+For every feature that is actually shipped:
+
+* define Low/Medium/High behaviour;
+* provide a capability fallback;
+* preserve a sensible result when the high-quality path is unavailable.
+
+A feature that is explicitly deferred does not need full Low/Medium/High implementation.
+
+## Priority order
+
+### M4.1 Atmosphere
+
+Implement, where the hardware/capability budget allows:
+
+* half-resolution screen-space sun shafts through mist;
+* bloom using a sensible downsample/filter/upsample chain;
+* improved height and valley fog;
+* sun in-scatter;
+* time-of-day grading presets:
+
+  * dawn;
+  * morning;
+  * midday;
+  * dusk;
+  * night;
+* filmic tone response.
+
+Prefer stable approximations over expensive techniques that only work on one backend.
+
+### M4.2 Ambient occlusion and contact
+
+Use:
+
+* affordable half-resolution SSAO or GTAO-lite on High;
+* baked terrain/canopy AO on all quality levels;
+* short character contact shadows on High.
+
+### M4.3 Forest
+
+Improve:
+
+* pine crowns using volumetric-looking branch-cluster structure;
+* fuller appearance from below;
+* bent/darkened interior shading where useful;
+* bamboo;
+* hierarchical wind;
+* trunk sway;
+* branch motion;
+* leaf flutter;
+* valley-scale gust waves;
+* distant tree impostors where beneficial;
+* grass hue variation;
+* grass height variation;
+* grass clumping.
+
+Avoid making grass uniformly lime.
+
+### M4.4 Terrain
+
+Implement material variation using:
+
+* moss;
+* rock;
+* soil;
+* leaf litter;
+* wet stream banks;
+* height blending;
+* triplanar projection where appropriate;
+* procedural detail normals;
+* visibly darker/damper ground near water.
+
+### M4.5 Anti-aliasing
+
+Add:
+
+* FXAA or SMAA-lite.
+
+Add TAA only if it is genuinely stable on foliage and movement.
+
+Do not ship visibly smeary TAA merely because it exists.
+
+### Optional stretch work
+
+Only after the required M4.1–M4.5 work is stable:
+
+* water refraction;
+* shore foam;
+* campfire smoke;
+* heat shimmer;
+* distant mountain silhouettes;
+* aerial perspective.
+
+These are optional.
+
+They must not destabilize the release.
+
+## M4 deferral rule
+
+M4 is impact-driven.
+
+If stability, correctness or release completion is threatened:
+
+* preserve the stable implementation;
+* defer the lowest-impact remaining visual item(s);
+* record the exact reason in `DESIGN_LOG.md`.
+
+Do not force every visual effect into the release at the expense of the release itself.
+
+## Performance budget
+
+High should target approximately:
+
+* Iris Xe class;
+* Apple M1 class;
+* 1080p.
+
+Add:
+
+```text
+?bench=1
+```
+
+and:
+
+```text
+--bench
+```
+
+with a deterministic camera route through:
+
+* day;
+* dusk;
+* night campfire.
+
+Produce JSON frame-time statistics covering:
+
+* CPU timing;
+* bgfx GPU timing where available.
+
+The Arena sandbox cannot measure a real GPU.
+
+Therefore:
+
+* SwiftShader measurements must be explicitly labelled SwiftShader/software;
+* do not convert them into an Iris Xe/M1 claim;
+* do not block the release merely because real hardware was not benchmarked.
+
+After the release is ready, the owner may choose to run the benchmark on real hardware, but the agent may proceed without that measurement.
+
+## M4 evidence
+
+Capture before/after screenshots for the relevant QA scenarios.
+
+CI-generated screenshots may be uploaded, but only screenshots actually inspected by the agent are described as visually inspected.
+
+### M4 exit gate
+
+The graphics pass is complete enough that the resulting improvement is clearly visible without introducing release-critical regressions.
+
+Any deferred visual items are explicitly documented.
+
+Commit and push M4.
+
+---
+
+# 12. Milestone M5 — QA and polish
+
+Build a fixed visual QA matrix using:
+
+* title;
+* day spawn;
+* character close-up;
+* dusk forest;
+* night campfire;
+* shrine;
+* night wolf;
+* misty dawn.
+
+Use:
+
+```text
+?qa=
+```
+
+for fixed framing scenarios.
+
+Use quality presets where practical.
+
+Store curated screenshots under:
+
+```text
+docs/qa/v0.1.0-*.png
+```
+
+## Visual polish loop
+
+After each pass, evaluate:
+
+> What is the single most obvious thing preventing this from looking like a polished commercial game?
+
+Fix that issue when:
+
+* it is within the release scope;
+* the improvement is clearly visible;
+* it does not require disproportionate architectural churn;
+* all relevant regression checks remain green.
+
+Continue only while each additional pass produces a meaningful, observable improvement.
+
+There is **no arbitrary iteration count**, but do not enter an endless subjective loop.
+
+Stop polishing when the remaining issue is:
+
+* low impact;
+* outside the release scope;
+* primarily subjective;
+* or would require disproportionate architectural changes.
+
+## Regression checks
+
+Keep all existing tests green.
+
+Verify that v3 saves from the vertical slice still load.
+
+Run the `persist` browser playtest.
+
+Do not sacrifice regression safety for screenshot quality.
+
+### M5 exit gate
+
+All release documentation, regression checks and curated evidence are ready.
+
+Commit and push M5.
+
+---
+
+# 13. Release gate
+
+Before requesting merge approval, all applicable release gates must be true.
+
+## CI
+
+The PR head must have green results for:
+
+* warnings-as-errors;
+* unit tests;
+* sanitizers;
+* native smoke tests;
+* shader profiles;
+* web build;
+* browser playtest;
+* release dry run;
+* required platform release checks.
+
+If a CI check fails:
+
+1. inspect the failure;
+2. determine the root cause;
+3. fix the code/configuration;
+4. push the fix;
+5. rerun/update the PR;
+6. wait for the new checks;
+7. repeat until the release-critical checks are green.
+
+Do not declare the PR ready because a previous commit was green.
+
+The **current PR head** must be green.
+
+## Release artifacts
+
+All required §9 assets must be successfully produced by CI.
+
+Every release asset must pass its runner-side validation.
+
+## Single-file web
+
+Must:
+
+* open via `file://`;
+* launch in Chrome;
+* show the title;
+* have zero browser console errors;
+* remain playable if persistence is unavailable.
+
+## Animation
+
+Must:
+
+* include the skinned player;
+* include the skinned wolf;
+* include foot IK;
+* pass animation tests.
+
+## Graphics
+
+M4.1–M4.5 must either:
+
+* be implemented and verified;
+* or be explicitly deferred with a reason in the design log.
+
+## Documentation
+
+Update:
+
+* `README.md`;
+* `CHANGELOG.md`;
+* `docs/ASSETS.md`;
+* relevant build/run instructions;
+* Pages URL;
+* platform launch instructions;
+* controls;
+* benchmark interpretation where applicable.
+
+No placeholders.
+
+No debug UI in release builds.
+
+## Assets and licensing
+
+Every new third-party asset/file must have permissive licensing and recorded provenance.
+
+Allowed examples include:
+
+* OFL;
+* MIT;
+* zlib;
+* public domain.
+
+No unclear-license assets.
+
+---
+
+# 14. Pull request, merge and release procedure
+
+## 14.1 Open the PR
+
+Push the session branch.
+
+Create a PR:
+
+```bash
+gh pr create \
+  --base main \
+  --title "Mistpine v0.1.0: stability, graphics, animation, desktop + web releases" \
+  --body-file <notes>
+```
+
+The PR body must contain a concise verification table.
+
+Use the same evidence/honesty rules as this prompt.
+
+## 14.2 Dry-run release on the PR head
+
+Run the release workflow against the exact PR head SHA.
+
+Use the workflow's dry-run mode so that final release assets are not uploaded.
+
+Conceptually:
+
+```bash
+gh workflow run release.yml \
+  -f tag=v0.1.0-rc \
+  -f sha=<head-sha>
+```
+
+Then:
+
+```bash
+gh pr checks --watch
+```
+
+and inspect the release workflow result.
+
+If anything fails:
+
+* fix;
+* commit;
+* push;
+* wait for updated CI;
+* rerun the dry run as needed.
+
+## 14.3 Owner approval gate — mandatory
+
+When:
+
+* the PR head is green;
+* the dry-run release pipeline is green;
+* all required release checks pass;
+
+**STOP before merging.**
+
+Ask the owner for explicit approval to merge the PR.
+
+Do not run:
+
+```bash
+gh pr merge
+```
+
+until the owner explicitly approves.
+
+Do not reinterpret silence as approval.
+
+## 14.4 After explicit merge approval
+
+Merge using:
+
+```bash
+gh pr merge <n> --merge
+```
+
+Record the merge SHA.
+
+Create a draft release:
+
+```bash
+gh release create v0.1.0 \
+  --target <merge-sha> \
+  --draft \
+  --title "Mistpine v0.1.0" \
+  --notes-file CHANGELOG-excerpt.md
+```
+
+Build and attach release assets:
+
+```bash
+gh workflow run release.yml \
+  -f tag=v0.1.0 \
+  -f sha=<merge-sha>
+```
+
+Wait for the workflow to finish successfully.
+
+## 14.5 Verify the draft release
+
+Run:
+
+```bash
+gh release view v0.1.0 --json assets
+```
+
+Verify:
+
+* every expected asset exists;
+* asset names are correct;
+* sizes are plausible;
+* `SHA256SUMS.txt` contains all other release assets;
+* no required asset is missing.
+
+The Arena sandbox cannot download the assets because GitHub object storage is blocked.
+
+Therefore verify release existence and metadata through GitHub.
+
+Do not claim local execution of an inaccessible release artifact.
+
+## 14.6 Publish only when verified
+
+Publish only when:
+
+* all release assets are present;
+* all runner-side checks passed;
+* required documentation is updated;
+* no known release-blocking issue remains;
+* the Pages deployment has succeeded where verifiable.
+
+If a post-merge release problem occurs:
+
+* fix forward with a new commit;
+* rebuild the affected release artifacts;
+* re-run validation;
+* never publish a known-broken release.
+
+---
+
+# 15. GitHub Pages verification
+
+The Pages deployment should be confirmed from GitHub Actions and repository metadata.
+
+Because the Arena sandbox cannot access `*.github.io` directly:
+
+* do not pretend to have performed a live HTTP/browser check from the sandbox;
+* use CI deployment status and available GitHub evidence;
+* record the limitation explicitly if direct serving cannot be tested from the environment.
+
+If Pages deployment itself fails, diagnose and fix it before considering the release complete.
+
+---
+
+# 16. Release notes
+
+The release notes must state:
+
+* this is an unsigned desktop build;
+* Windows SmartScreen may require:
+  `More info → Run anyway`;
+* macOS may require:
+  `right-click → Open`
+  or
+  `System Settings → Privacy & Security → Open Anyway`;
+* macOS is ad-hoc signed, not notarized.
+
+Do not claim commercial signing.
+
+Do not claim notarization.
+
+Do not imply a certificate exists when it does not.
+
+---
+
+# 17. Final report
+
+The final report must use exactly these sections:
+
+## Project
+
+State:
+
+* repository;
+* release version;
+* merge SHA;
+* PR number.
+
+## What changed
+
+Summarize:
+
+* stability;
+* graphics;
+* animation;
+* UI;
+* release pipeline.
+
+Do not list work that was not actually completed.
+
+## Downloads and how to run each one
+
+For each release asset:
+
+* name;
+* platform;
+* exact launch steps;
+* important first-run warning if applicable.
+
+## Verification
+
+Use a table distinguishing:
+
+| Area | Built | Launched | Tested | Visually inspected | CI verified | Notes |
+| ---- | ----- | -------- | ------ | ------------------ | ----------- | ----- |
+
+Only mark a cell as verified when evidence exists.
+
+## Performance
+
+Report:
+
+* real-GPU benchmark numbers only if actually measured;
+* otherwise state:
+  `not measured on real hardware`.
+
+If SwiftShader results are reported, label them clearly as software rendering.
+
+## Assets and licences
+
+List notable new third-party files/assets and their provenance/licensing.
+
+## Known limitations
+
+Include:
+
+* anything deferred;
+* unsupported runner-side checks;
+* hardware-specific unknowns;
+* file:// persistence limitations where relevant;
+* any known non-blocking console noise.
+
+## Links
+
+Provide:
+
+* PR;
+* release;
+* Pages URL;
+* relevant CI runs.
+
+Lead with any remaining risk the owner must know.
+
+---
+
+# 18. Final agent behaviour requirements
+
+At every stage:
+
+* prefer evidence over assumption;
+* prefer a small correct change over a speculative large refactor;
+* preserve working gameplay;
+* preserve save compatibility;
+* avoid unnecessary architectural expansion;
+* do not fabricate benchmarks;
+* do not fabricate platform verification;
+* do not silently omit requirements;
+* do not rewrite historical design-log entries;
+* do not merge without explicit owner approval;
+* do not claim the release is ready while required CI gates are failing;
+* do not publish a missing or known-broken asset.
+
+The success criterion is not “a lot of code changed”.
+
+The success criterion is:
+
+**Mistpine v0.1.0 is actually shippable, visually improved, procedurally animated, portable across the required targets, immediately runnable from its release artifacts, and backed by honest verification evidence.**
