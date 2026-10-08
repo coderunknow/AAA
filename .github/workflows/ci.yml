@@ -232,7 +232,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc.exe
-          key: shaderc-win-${{ hashFiles('cmake/Dependencies.cmake') }}
+          # v2: include the workflow + presets in the key so a toolchain/config
+          # change can never resurrect a stale cached binary.
+          key: shaderc-win-v2-${{ hashFiles('cmake/Dependencies.cmake', 'CMakePresets.json', '.github/workflows/ci.yml') }}
       - name: Build shaderc (MSVC, static CRT)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
@@ -241,24 +243,31 @@ jobs:
           cmake --build --preset tools --target shaderc
       - name: Smoke-test the Windows shaderc (spirv + dx11)
         run: |
-          set -x
           SHADERC="build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc.exe"
           BGXSRC="build/tools/_deps/bgfx_cmake-src/bgfx/src"
-          : > /tmp/smoke.log
-          ls -la "$(dirname "$SHADERC")" >> /tmp/smoke.log 2>&1 || true
+          LOG=/tmp/smoke.log
+          : > "$LOG"
+          ls -la "$SHADERC" >> "$LOG" 2>&1 || echo "shaderc.exe MISSING at $SHADERC" >> "$LOG"
+          # dumpbin note: the switch is spelled //dependents — MSYS bash rewrites a
+          # leading-slash argument ("/dependents") into a Windows path otherwise.
           DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe 2>/dev/null | tail -1)
-          if [ -n "${DUMPBIN:-}" ]; then "$DUMPBIN" /dependents "$SHADERC" >> /tmp/smoke.log 2>&1 || true; fi
+          if [ -n "${DUMPBIN:-}" ]; then "$DUMPBIN" //dependents "$SHADERC" >> "$LOG" 2>&1 || true; fi
+          # Startup probe: prints the tool version and proves the exe starts at all
+          # (a missing-DLL or corrupt binary dies here, with its real exit code).
+          "$SHADERC" --version >> "$LOG" 2>&1
+          echo "version exit: $?" >> "$LOG"
           mkdir -p /tmp/smoke
-          spirv_rc=1; dx11_rc=1
           "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.spirv.bin --type vertex --platform linux -p spirv \
-            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1 && spirv_rc=0
-          echo "spirv exit: $spirv_rc" >> /tmp/smoke.log
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> "$LOG" 2>&1
+          spirv_rc=$?
+          echo "spirv exit: $spirv_rc" >> "$LOG"
           "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.dx11.bin --type vertex --platform windows -p s_5_0 \
-            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1 && dx11_rc=0
-          echo "dx11 exit: $dx11_rc" >> /tmp/smoke.log
-          cat /tmp/smoke.log
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> "$LOG" 2>&1
+          dx11_rc=$?
+          echo "dx11 exit: $dx11_rc" >> "$LOG"
+          cat "$LOG"
           if [ "$spirv_rc" -ne 0 ] || [ "$dx11_rc" -ne 0 ]; then
-            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/smoke.log "windows shaderc smoke test failed"
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "windows shaderc smoke test failed"
             exit 1
           fi
       - name: Compile the Windows profile set (dx11, spirv, glsl)

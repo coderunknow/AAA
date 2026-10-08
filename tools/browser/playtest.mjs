@@ -178,7 +178,7 @@ try {
   fs.writeFileSync(path.join(out, 'console.log'), log.join('\n') + '\n');
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   await browser.close();
-  server.close();
+  if (server) server.close();
   console.log(JSON.stringify(summary, null, 2));
   process.exit(ok ? 0 : 1);
 }
