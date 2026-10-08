@@ -255,14 +255,29 @@ bool App::iterate() {
         if (opts_.startHours >= 0.0f) game_->timeOfDay().setHours(opts_.startHours);
         if (!opts_.qaScenario.empty() && !game_->applyScenario(opts_.qaScenario))
           AAA_LOG_WARN("unknown qa scenario '%s'", opts_.qaScenario.c_str());
-        if (!opts_.headless) {
+        if (opts_.bench) {
+          // Benchmark (PROMPT §11): no menus, a campfire ready for the night phase, and
+          // a deterministic camera route driven from simulation time in updateBench().
+          benchActive_ = true;
+          benchPhases_[0].name = "day";
+          benchPhases_[0].hours = 9.0f;
+          benchPhases_[1].name = "dusk";
+          benchPhases_[1].hours = 18.7f;
+          benchPhases_[2].name = "night campfire";
+          benchPhases_[2].hours = 22.5f;
+          game_->applyScenario("camp");  // burning fire in front of the spawn point
+          ui_.setMenu(Ui::Menu::Playing);
+          ui_.setStarted(true);
+          AAA_LOG_INFO("benchmark: day -> dusk -> night campfire, %.0f s sim per phase, JSON -> %s",
+                       kBenchPhaseSeconds, opts_.benchPath.c_str());
+        } else if (!opts_.headless && !opts_.play) {
           // Title / continue screen (in-engine UI); the first click starts the journey.
           game_->setPaused(true);
           ui_.setMenu(Ui::Menu::Title);
           ui_.setHasSave(hasSave_);
           ui_.setStarted(false);
         } else {
-          // Headless smoke runs play straight through (no menus).
+          // Headless smoke runs and --play captures run straight through (no menus).
           ui_.setMenu(Ui::Menu::Playing);
           ui_.setStarted(true);
         }

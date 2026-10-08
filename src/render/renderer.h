@@ -163,6 +163,12 @@ class Renderer {
   bgfx::FrameBufferHandle ssaoFb_[3] = {BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE};
   bgfx::TextureHandle ssaoRaw_ = BGFX_INVALID_HANDLE, ssaoBlur_[2] = {BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE};
   uint32_t fxW_ = 0, fxH_ = 0;  // half-res effect target size
+  // 1x1 black texture bound wherever a disabled effect's target would be, so a
+  // sampler is never left unbound (bgfx uniforms are per-frame, so this is cheap).
+  bgfx::TextureHandle dummyTex_ = BGFX_INVALID_HANDLE;
+  // Deterministic SSAO hemisphere kernel; uploaded per frame (uniform state does not
+  // survive bgfx::frame()).
+  float ssaoKernel_[16][4] = {};
   bgfx::VertexBufferHandle fullscreenVb_ = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle skyProg_ = BGFX_INVALID_HANDLE, tonemapProg_ = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle brightProg_ = BGFX_INVALID_HANDLE, blurProg_ = BGFX_INVALID_HANDLE;

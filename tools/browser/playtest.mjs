@@ -148,6 +148,19 @@ try {
     await sleep(1500);
     await shot('01-still');
     summary.rafFpsIdle = await measureFps(3000);
+  } else if (script === 'qa') {
+    // Visual QA matrix (PROMPT §12): one fixed-framing screenshot of the title and one
+    // of the ?qa= scenario. The framing is pinned by the game (camera override), so the
+    // capture is reproducible regardless of frame rate.
+    await sleep(1200);
+    await page.click('#canvas').catch(() => {});
+    await sleep(2500);  // let the veil fade, the world settle and streaming catch up
+    summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    if (summary.playingMenu !== 'playing') throw new Error('expected playing after the title click, got: ' + summary.playingMenu);
+    // Let deferred streaming settle a little longer at low frame rates.
+    await sleep(2500);
+    await shot('01-scene');
+    summary.rafFpsIdle = await measureFps(2000);
   }
   ok = true;
 } catch (e) {

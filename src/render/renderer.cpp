@@ -237,6 +237,49 @@ bool Renderer::init(const RendererInit& in) {
   u_.grade = U("u_grade");
   u_.sHdr = U("s_hdr", bgfx::UniformType::Sampler);
   u_.sShadow = U("s_shadowMap", bgfx::UniformType::Sampler);
+  // Post-effect chain (bloom / shafts / SSAO / FXAA) uniforms.
+  u_.bright = U("u_bright");
+  u_.blurDir = U("u_blurDir");
+  u_.sunScreen = U("u_sunScreen");
+  u_.texel = U("u_texel");
+  u_.effects = U("u_effects");
+  u_.proj = U("u_proj", bgfx::UniformType::Mat4);
+  u_.invProj = U("u_invProj", bgfx::UniformType::Mat4);
+  u_.ssaoParams = U("u_ssaoParams");
+  u_.kernel = bgfx::createUniform("u_kernel", bgfx::UniformType::Vec4, 16);
+  u_.sBloom = U("s_bloom", bgfx::UniformType::Sampler);
+  u_.sShafts = U("s_shafts", bgfx::UniformType::Sampler);
+  u_.sSsao = U("s_ssao", bgfx::UniformType::Sampler);
+  u_.sBlur = U("s_blur", bgfx::UniformType::Sampler);
+  u_.sDepth = U("s_depth", bgfx::UniformType::Sampler);
+  // Deterministic hemisphere kernel for SSAO (fixed LCG seed -- no runtime randomness).
+  // Uploaded every frame in submitPostEffects: bgfx uniform state does not survive
+  // bgfx::frame(), so setting it once here would be lost.
+  {
+    uint32_t seed = 1337u;
+    auto rnd = [&seed]() {
+      seed = seed * 1664525u + 1013904223u;
+      return static_cast<float>((seed >> 8) & 0xFFFFFF) / static_cast<float>(0x1000000);
+    };
+    for (int i = 0; i < 16; ++i) {
+      // Hemisphere around +Z (tangent space), clustered toward the origin.
+      const float scale = 0.1f + 0.9f * static_cast<float>(i * i) / 256.0f;
+      Vec3 dir{2.0f * rnd() - 1.0f, 2.0f * rnd() - 1.0f, rnd()};
+      dir = normalize(dir);
+      ssaoKernel_[i][0] = dir.x * scale;
+      ssaoKernel_[i][1] = dir.y * scale;
+      ssaoKernel_[i][2] = dir.z * scale;
+      ssaoKernel_[i][3] = 1.0f / 16.0f;
+    }
+  }
+  // 1x1 black stand-in bound wherever a disabled effect's target would be, so a
+  // sampler is never left unbound (bgfx logs/errors on missing texture bindings).
+  {
+    const uint32_t black = 0x000000ffu;
+    dummyTex_ = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8,
+                                      BGFX_TEXTURE_NONE | BGFX_SAMPLER_UVW_CLAMP | BGFX_SAMPLER_POINT,
+                                      bgfx::copy(&black, sizeof(black)));
+  }
 
   // Oversized triangle covering the screen.
   const float tri[9] = {-1.0f, -1.0f, 0.0f, 3.0f, -1.0f, 0.0f, -1.0f, 3.0f, 0.0f};
@@ -270,6 +313,8 @@ void Renderer::shutdown() {
   terrain_.reset();
   ui_.shutdown();
   destroyTargets();
+  if (bgfx::isValid(dummyTex_)) bgfx::destroy(dummyTex_);
+  dummyTex_ = BGFX_INVALID_HANDLE;
   if (bgfx::isValid(fullscreenVb_)) bgfx::destroy(fullscreenVb_);
   for (bgfx::UniformHandle h : {u_.sunDir, u_.sunColor, u_.skyAmbient, u_.groundAmbient, u_.fogColor, u_.fogParams,
                                 u_.camPos, u_.wind, u_.shadowParams, u_.shadowMtx, u_.skyZenith, u_.skyHorizon,
@@ -709,10 +754,14 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
     bgfx::setUniform(u_.effects, effects);
     bgfx::setUniform(u_.texel, texel);
     bgfx::setTexture(0, u_.sHdr, hdrColor_, BGFX_SAMPLER_UVW_CLAMP);
-    bgfx::setTexture(1, u_.sBloom, bgfx::isValid(bloomBlur_[1]) ? bloomBlur_[1] : bloomBright_,
+    bgfx::setTexture(1, u_.sBloom,
+                     bgfx::isValid(bloomBlur_[1]) ? bloomBlur_[1]
+                                                  : (bgfx::isValid(bloomBright_) ? bloomBright_ : dummyTex_),
                      BGFX_SAMPLER_UVW_CLAMP);
-    bgfx::setTexture(2, u_.sShafts, shaftsTex_, BGFX_SAMPLER_UVW_CLAMP);
-    bgfx::setTexture(3, u_.sSsao, bgfx::isValid(ssaoBlur_[1]) ? ssaoBlur_[1] : ssaoRaw_, BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(2, u_.sShafts, bgfx::isValid(shaftsTex_) ? shaftsTex_ : dummyTex_, BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(3, u_.sSsao,
+                     bgfx::isValid(ssaoBlur_[1]) ? ssaoBlur_[1] : (bgfx::isValid(ssaoRaw_) ? ssaoRaw_ : dummyTex_),
+                     BGFX_SAMPLER_UVW_CLAMP);
     bgfx::setVertexBuffer(0, fullscreenVb_);
     // Write alpha too: the browser composites the WebGL canvas with its alpha channel, so an
     // RGB-only write leaves the canvas fully transparent (only the page background shows).
@@ -726,6 +775,82 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
 
   drawDebug(game, realDt);
   bgfx::frame();
+}
+
+void Renderer::submitFullscreen(bgfx::ViewId view, bgfx::FrameBufferHandle fb, uint32_t w, uint32_t h,
+                                bgfx::ProgramHandle prog, bgfx::UniformHandle sampler, bgfx::TextureHandle src,
+                                uint64_t samplerFlags) {
+  if (!bgfx::isValid(fb) || !bgfx::isValid(prog)) return;
+  bgfx::setViewFrameBuffer(view, fb);
+  bgfx::setViewRect(view, 0, 0, static_cast<uint16_t>(w), static_cast<uint16_t>(h));
+  bgfx::setViewClear(view, BGFX_CLEAR_COLOR, 0x000000ff, 1.0f, 0);
+  bgfx::setTexture(0, sampler, bgfx::isValid(src) ? src : dummyTex_, samplerFlags);
+  bgfx::setVertexBuffer(0, fullscreenVb_);
+  bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+  bgfx::submit(view, prog);
+}
+
+// Bloom, sun shafts and SSAO: all half-resolution, all quality-gated, each with a
+// capability fallback (the target handles are only valid when the effect can run).
+void Renderer::submitPostEffects(const CameraView& cv, const float* proj, const float* viewProj, bool originBL,
+                                 bool homDepth) {
+  const float screen[4] = {originBL ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+  bgfx::setUniform(u_.screenParams, screen);
+  const float texel[4] = {1.0f / static_cast<float>(fxW_), 1.0f / static_cast<float>(fxH_), 0.0f, 0.0f};
+  bgfx::setUniform(u_.texel, texel);
+  const uint64_t linearFlags = BGFX_SAMPLER_UVW_CLAMP;
+  const uint64_t pointFlags = BGFX_SAMPLER_UVW_CLAMP | BGFX_SAMPLER_POINT;
+  const float hDir[4] = {1.0f / static_cast<float>(fxW_), 0.0f, 0.0f, 0.0f};
+  const float vDir[4] = {0.0f, 1.0f / static_cast<float>(fxH_), 0.0f, 0.0f};
+
+  // --- bloom: soft-knee bright pass, then separable gaussian iterations ---------------------
+  if (settings_.bloom && bgfx::isValid(bloomFb_[0]) && bgfx::isValid(bloomFb_[2])) {
+    const float bright[4] = {settings_.bloomThreshold, 0.6f, 1.0f, 0.0f};
+    bgfx::setUniform(u_.bright, bright);
+    submitFullscreen(kViewBloomBright, bloomFb_[0], fxW_, fxH_, brightProg_, u_.sHdr, hdrColor_, linearFlags);
+    bgfx::TextureHandle src = bloomBright_;
+    const int iterations = std::clamp(settings_.bloomIterations, 1, 2);
+    for (int iter = 0; iter < iterations; ++iter) {
+      bgfx::setUniform(u_.blurDir, hDir);
+      submitFullscreen(kViewBloomBlurA, bloomFb_[1], fxW_, fxH_, blurProg_, u_.sBlur, src, linearFlags);
+      bgfx::setUniform(u_.blurDir, vDir);
+      submitFullscreen(kViewBloomBlurB, bloomFb_[2], fxW_, fxH_, blurProg_, u_.sBlur, bloomBlur_[0], linearFlags);
+      src = bloomBlur_[1];
+    }
+  }
+
+  // --- sun shafts: radial blur of the bright pass towards the sun's screen position ---------
+  if (settings_.shafts && bgfx::isValid(shaftsFb_) && bgfx::isValid(bloomBright_)) {
+    const Vec3 sunFar = cv.eye + atm_.lightDir * 1000.0f;
+    const float w = viewProj[3] * sunFar.x + viewProj[7] * sunFar.y + viewProj[11] * sunFar.z + viewProj[15];
+    float sunU = 0.5f, sunV = 0.5f, vis = 0.0f;
+    if (w > 0.01f) {
+      const float ndcX = (viewProj[0] * sunFar.x + viewProj[4] * sunFar.y + viewProj[8] * sunFar.z + viewProj[12]) / w;
+      const float ndcY = (viewProj[1] * sunFar.x + viewProj[5] * sunFar.y + viewProj[9] * sunFar.z + viewProj[13]) / w;
+      sunU = clampf(ndcX * 0.5f + 0.5f, 0.0f, 1.0f);
+      sunV = clampf(originBL ? ndcY * 0.5f + 0.5f : 0.5f - ndcY * 0.5f, 0.0f, 1.0f);
+      vis = 1.0f;
+    }
+    const float sun[4] = {sunU, sunV, vis, static_cast<float>(settings_.shaftTaps)};
+    bgfx::setUniform(u_.sunScreen, sun);
+    submitFullscreen(kViewShafts, shaftsFb_, fxW_, fxH_, shaftsProg_, u_.sBlur, bloomBright_, linearFlags);
+  }
+
+  // --- SSAO: depth-based hemisphere occlusion, then a separable blur ------------------------
+  if (settings_.ssao && bgfx::isValid(ssaoFb_[0]) && bgfx::isValid(ssaoFb_[2]) && bgfx::isValid(depthTex_)) {
+    float invProj[16];
+    bx::mtxInverse(invProj, proj);
+    bgfx::setUniform(u_.proj, proj);
+    bgfx::setUniform(u_.invProj, invProj);
+    bgfx::setUniform(u_.kernel, ssaoKernel_, 16);
+    const float params[4] = {settings_.ssaoRadius, 0.02f, settings_.ssaoIntensity, homDepth ? 1.0f : 0.0f};
+    bgfx::setUniform(u_.ssaoParams, params);
+    submitFullscreen(kViewSsao, ssaoFb_[0], fxW_, fxH_, ssaoProg_, u_.sDepth, depthTex_, pointFlags);
+    bgfx::setUniform(u_.blurDir, hDir);
+    submitFullscreen(kViewSsaoBlurA, ssaoFb_[1], fxW_, fxH_, blurProg_, u_.sBlur, ssaoRaw_, linearFlags);
+    bgfx::setUniform(u_.blurDir, vDir);
+    submitFullscreen(kViewSsaoBlurB, ssaoFb_[2], fxW_, fxH_, blurProg_, u_.sBlur, ssaoBlur_[0], linearFlags);
+  }
 }
 
 void Renderer::drawDebug(const Game& game, float realDt) {
