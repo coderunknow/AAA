@@ -12,6 +12,30 @@
 #   Windows native : dx11 (D3D11 primary), spirv + glsl (Vulkan / OpenGL fallbacks)
 #   macOS native   : metal (Metal)
 
+# Asset output locations. Defined before any early return below: the runtime-asset
+# targets (the UI fonts) use AAA_ASSET_OUT_DIR even when shader compilation is
+# skipped, and an empty value there makes them try to mkdir("/fonts").
+set(AAA_SHADER_SRC_DIR "${CMAKE_SOURCE_DIR}/shaders")
+set(AAA_ASSET_OUT_DIR "${CMAKE_BINARY_DIR}/assets")
+
+# Escape hatch for platforms where the pinned bgfx shaderc cannot be built.
+#
+# Dawn's tint (which bgfx's shaderc links unconditionally, but only uses for
+# WGSL/WebGPU — a backend this project never uses) does not compile with the
+# libc++ shipped on the current macOS runners. Rather than ship without a macOS
+# artifact, the release pipeline compiles the shader profiles on a Linux runner
+# (where the host shaderc emits every profile except dx11) and the macOS job
+# builds with prebuilt shader binaries.
+option(AAA_SKIP_SHADER_COMPILE "Use prebuilt shader binaries instead of compiling them" OFF)
+
+if(AAA_SKIP_SHADER_COMPILE)
+  message(STATUS "shader compilation SKIPPED: using prebuilt shader binaries from ${CMAKE_BINARY_DIR}/assets/shaders")
+  function(aaa_add_shaders target)
+    add_custom_target(${target} ALL COMMAND ${CMAKE_COMMAND} -E true)
+  endfunction()
+  return()
+endif()
+
 if(AAA_SHADERC)
   set(AAA_SHADERC_EXE "${AAA_SHADERC}")
   set(AAA_SHADERC_DEP "")
@@ -57,9 +81,6 @@ elseif(APPLE)
 else()
   set(AAA_SHADER_PROFILES "glsl:440:linux" "spirv:spirv:linux")
 endif()
-
-set(AAA_SHADER_SRC_DIR "${CMAKE_SOURCE_DIR}/shaders")
-set(AAA_ASSET_OUT_DIR "${CMAKE_BINARY_DIR}/assets")
 
 # aaa_add_shaders(<target-name> SHADERS vs_a.sc fs_a.sc ...)
 function(aaa_add_shaders target)

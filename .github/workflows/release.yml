@@ -143,6 +143,43 @@ jobs:
           path: qa/
 
   # ---------------------------------------------------------------------------
+  # Shader assets for platforms whose runner cannot build the pinned bgfx
+  # shaderc. Dawn's tint (linked by shaderc, but only used for WGSL/WebGPU,
+  # which this project never uses) does not compile with the libc++ on the
+  # current macOS runners. A Linux shaderc emits every profile we need except
+  # dx11, so macOS consumes this artifact with -DAAA_SKIP_SHADER_COMPILE=ON
+  # instead of building the tool.
+  # ---------------------------------------------------------------------------
+  shader-assets:
+    name: Shader assets (Linux shaderc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Host tools (shaderc)
+        run: |
+          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
+      - name: Compile every profile the Linux shaderc can emit
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SHADER_PROFILE_SET=host-all > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "shader-assets configure failed"; exit 1; }
+          cmake --build --preset native-headless --target aaa_shaders > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "shader-assets compilation failed"; exit 1; }
+          ls build/native-headless/assets/shaders/
+          # The metal profile is what macOS needs; assert it is really there.
+          test -d build/native-headless/assets/shaders/metal || { echo "metal shader profile missing" >&2; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shader-assets
+          path: build/native-headless/assets/shaders/
+
+  # ---------------------------------------------------------------------------
   # Windows x64: MSVC, static CRT, D3D11 primary. Portable zip: unzip -> run.
   # ---------------------------------------------------------------------------
   windows:
@@ -378,6 +415,7 @@ jobs:
   # ---------------------------------------------------------------------------
   macos:
     name: macOS arm64 package (Mistpine.app)
+    needs: shader-assets
     runs-on: macos-14
     timeout-minutes: 90
     steps:
@@ -390,16 +428,22 @@ jobs:
           [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-      - name: Host tools (shaderc — also emits the metal shader profile)
-        run: |
-          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
-            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
-          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
-            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
+      # The pinned bgfx shaderc cannot be built here (Dawn's tint fails to compile
+      # with this runner's libc++), so use the shader assets compiled on Linux.
+      - uses: actions/download-artifact@v4
+        with:
+          name: shader-assets
+          path: build/native-release/assets/shaders
       - name: Configure native-release
         run: |
-          cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
+          cmake --preset native-release -DAAA_BUILD_TESTS=OFF -DAAA_SKIP_SHADER_COMPILE=ON > /tmp/cfg.log 2>&1 ||
             { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "macos configure failed"; exit 1; }
+      - name: Verify the metal shader assets are present
+        run: |
+          ls build/native-release/assets/shaders/
+          n=$(ls build/native-release/assets/shaders/metal/*.bin 2>/dev/null | wc -l)
+          echo "metal shader binaries: $n"
+          [ "$n" -gt 0 ] || { echo "no metal shader binaries found" >&2; exit 1; }
       - name: Build native-release
         run: |
           cmake --build --preset native-release > /tmp/build.log 2>&1 ||
