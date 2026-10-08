@@ -114,9 +114,12 @@ bool Renderer::init(const RendererInit& in) {
 #endif
   }
   bgfx::RendererType::Enum selected = bgfx::RendererType::Count;
+  // Screenshot callback (PROMPT §9.8): writes --screenshot captures to PNG.
+  screenshotCb_.setListener([this](const std::string&, bool) { screenshotDone_ = true; });
   for (size_t i = 0; i < chain.size(); ++i) {
     bgfx::Init bi;
     bi.type = chain[i];
+    bi.callback = &screenshotCb_;
     // This bgfx revision describes the main window as a SwapChain (nwh == NULL -> headless).
     bi.swapChain.nwh = in.nativeWindow;
     bi.swapChain.ndt = in.nativeDisplay;
@@ -292,6 +295,14 @@ void Renderer::resize(uint32_t w, uint32_t h) {
     bgfx::reset(settings_.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE, &sc);
   }
   createTargets();
+}
+
+void Renderer::requestScreenshot(const std::string& path) {
+  if (!initialised_ || path.empty()) return;
+  screenshotDone_ = false;
+  // BGFX_INVALID_HANDLE = the default framebuffer (the OS window's backbuffer).
+  bgfx::requestScreenShot(BGFX_INVALID_HANDLE, path.c_str());
+  AAA_LOG_INFO("screenshot requested: %s", path.c_str());
 }
 
 void Renderer::setQuality(QualityPreset q) {

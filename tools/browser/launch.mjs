@@ -2,6 +2,10 @@
 // @sparticuz/chromium ships a Chromium build plus SwiftShader (software GPU) and
 // the NSS libraries it needs; the latter are only auto-extracted on AWS Lambda,
 // so we unpack them here for ordinary Linux hosts.
+//
+// CHROME_PATH overrides the bundled Chromium with any executable (e.g. a system
+// Chrome/Chromium in CI). An overridden browser uses the system libraries, so the
+// bundled al2023 library extraction is skipped for it.
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
@@ -22,16 +26,30 @@ function ensureSystemLibs() {
 }
 
 export async function launchBrowser({ width = 1280, height = 720 } = {}) {
-  const executablePath = await chromium.executablePath();
-  ensureSystemLibs();
+  const override = process.env.CHROME_PATH || '';
+  let executablePath;
+  let env;
+  let extraArgs = [];
+  let headless = 'shell';
+  if (override) {
+    // System Chrome/Chromium: use its own libraries and the standard headless mode.
+    executablePath = override;
+    env = { ...process.env };
+    headless = true;
+  } else {
+    executablePath = await chromium.executablePath();
+    ensureSystemLibs();
+    env = { ...process.env, LD_LIBRARY_PATH: `${LIB_DIR}:/tmp:${process.env.LD_LIBRARY_PATH ?? ''}` };
+    extraArgs = chromium.args.filter(a => !a.startsWith('--window-size') && a !== '--single-process');
+  }
   return puppeteer.launch({
     executablePath,
-    headless: 'shell',
+    headless,
     protocolTimeout: 900000,  // software GL frames can take many seconds
     defaultViewport: { width, height, deviceScaleFactor: 1 },
-    env: { ...process.env, LD_LIBRARY_PATH: `${LIB_DIR}:/tmp:${process.env.LD_LIBRARY_PATH ?? ''}` },
+    env,
     args: [
-      ...chromium.args.filter(a => !a.startsWith('--window-size') && a !== '--single-process'),
+      ...extraArgs,
       '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist',
       `--window-size=${width},${height}`,
     ],

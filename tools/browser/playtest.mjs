@@ -28,15 +28,23 @@ fs.mkdirSync(out, { recursive: true });
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.data': 'application/octet-stream',
   '.map': 'application/json', '.json': 'application/json' };
-const server = http.createServer((req, res) => {
-  const url = decodeURIComponent(req.url.split('?')[0]);
-  const file = path.join(dir, url === '/' ? 'index.html' : url);
-  if (!file.startsWith(dir) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' });
-  fs.createReadStream(file).pipe(res);
-});
-await new Promise(r => server.listen(0, '127.0.0.1', r));
-const port = server.address().port;
+let server = null;
+let pageUrl;
+if (fileMode) {
+  // file:// mode: the single-file build must work with no HTTP server at all.
+  pageUrl = 'file://' + fileMode + (query ? (fileMode.includes('?') ? '&' : '?') + query : '');
+} else {
+  server = http.createServer((req, res) => {
+    const url = decodeURIComponent(req.url.split('?')[0]);
+    const file = path.join(dir, url === '/' ? 'index.html' : url);
+    if (!file.startsWith(dir) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' });
+    fs.createReadStream(file).pipe(res);
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  pageUrl = `http://127.0.0.1:${port}/?${query}`;
+}
 
 const log = [];
 const t0 = Date.now();
@@ -47,7 +55,7 @@ page.on('console', m => log.push(`${stamp()} [${m.type()}] ${m.text()}`));
 page.on('pageerror', e => log.push(`${stamp()} [pageerror] ${e.message}`));
 page.on('requestfailed', r => log.push(`${stamp()} [requestfailed] ${r.url()} ${r.failure()?.errorText}`));
 
-const summary = { url: `http://127.0.0.1:${port}/?${query}`, viewport: [width, height], shots: [], renderer: null };
+const summary = { url: pageUrl, fileMode: !!fileMode, viewport: [width, height], shots: [], renderer: null };
 const shot = async (name) => {
   const file = path.join(out, `${name}.png`);
   await page.screenshot({ path: file });
@@ -148,6 +156,12 @@ try {
 } finally {
   summary.ok = ok;
   summary.consoleErrors = log.filter(l => /\[(error|pageerror)\]/.test(l)).length;
+  // Release gate (PROMPT §9.9): zero browser console errors are required.
+  if (summary.consoleErrors > 0) {
+    ok = false;
+    summary.ok = false;
+    log.push(`${stamp()} [qa] FAILED: ${summary.consoleErrors} console error(s), see console.log`);
+  }
   fs.writeFileSync(path.join(out, 'console.log'), log.join('\n') + '\n');
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   await browser.close();

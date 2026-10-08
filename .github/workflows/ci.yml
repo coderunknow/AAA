@@ -136,6 +136,41 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 
+  browser:
+    name: Browser playtest (web build, headless Chromium)
+    needs: web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: mistpine-web
+          path: site
+      # Chromium system libraries (the bundled @sparticuz/chromium needs these).
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libnspr4 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libatk1.0-0 libatk-bridge2.0-0 libcups2 libasound2 ||
+          sudo apt-get install -y libnss3 libnspr4 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libasound2t64
+      - run: cd tools/browser && npm ci --no-audit --no-fund
+      - name: Playtest (default script)
+        run: |
+          cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-default \
+            --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/playtest.log 2>&1 ||
+            { tail -c 8000 /tmp/playtest.log; exit 1; }
+      - name: "Playtest (persist script: save round trip)"
+        run: |
+          cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-persist \
+            --query "hours=9&quality=low" --script persist --width 960 --height 540 > /tmp/playtest2.log 2>&1 ||
+            { tail -c 8000 /tmp/playtest2.log; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-browser
+          path: qa/
+
   sanitizers:
     name: "Sanitizers (ASan + UBSan: unit tests + smoke runs)"
     needs: tools

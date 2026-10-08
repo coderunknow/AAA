@@ -173,3 +173,52 @@ Verified locally (2 cores, no GPU; native-headless build + web-release + headles
 - NOT yet verified: the in-engine UI's pixels in the browser (first playtest showed the world
   without the veil — the UiRenderer init call had been lost to an edit race; fixed, rebuild in
   progress). Native windowed RENDERING (no GL in the sandbox; CI compiles it only).
+
+### #12 — 2026-10-08 — CONTRADICTION (resolved conservatively, see NOTE)
+
+While continuing the release work, `origin/arena/7ae554fb-aaa` was found to have advanced to
+`60931ff` (two further M1 commits) from *another* agent session writing to the same session
+branch, while this sandbox had been recycled back to `d1d50c9`. Local uncommitted M1 edits were
+byte-for-byte superseded by that work and were dropped after verification (`git stash` + `drop`).
+Found and fixed in that work:
+
+* `.github/workflows/ci.yml` at `60931ff` was **syntactically invalid YAML**: the `sanitizers` job
+  name contained an unquoted `: ` ("Sanitizers (ASan + UBSan: unit tests + smoke runs)"). GitHub
+  therefore created a "workflow file issue" run (37739138841) and **no `pull_request` run at all**
+  for the PR head, so the PR looked unverified. Fixed by quoting the name (commit `a9485b1`);
+  `ci.yml` parses again (9 jobs) and a green PR run followed.
+
+This is not a material contradiction for the release: it is a broken CI configuration, not an
+owner decision, scope or architecture change. Recorded rather than escalated.
+
+### #13 — 2026-10-08 — DONE: M2 part 1 (release pipeline scaffolding, single-file web, screenshot capture) + M1 verification
+
+Verified locally in this sandbox (2 cores, no GPU, no display; native-headless build + web build
+via the bootstrapped Emscripten 4.0.11 toolchain):
+
+* **M1 verified locally**: 54/54 unit tests, CTest 4/4 (unit + day/night-camp/wolves smoke).
+  Packaged-binary smoke test from a foreign CWD (`/tmp`) passes and finds its assets
+  (executable-relative discovery), exit 0, no `[error]` lines.
+* **`.github/workflows/release.yml`** (new, dry-run capable): web zip + single-file HTML with
+  browser QA on both (HTTP and `file://`), Windows x64 zip (MSVC static CRT, `WIN32_EXECUTABLE`,
+  dumpbin audit, foreign-CWD smoke, D3D11 render attempt), Linux x86_64 AppImage + tar.gz on
+  ubuntu-22.04 (ldd audit, foreign-CWD smoke for both, xvfb + Mesa llvmpipe OpenGL render
+  verification with `--screenshot`), macOS arm64 `Mistpine.app` (Metal, Info.plist,
+  `codesign --force --deep -s -` ad-hoc, otool audit, foreign-CWD smoke), `SHA256SUMS.txt` over
+  exactly the six other assets, and a guarded `publish` job that only runs for `tag=v0.1.0`
+  (draft release + upload + verify). `tag=v0.1.0-rc` is the dry run: identical builds/checks,
+  nothing published.
+* **Single-file web build**: `web-singlefile` preset (`-sSINGLE_FILE=1`) + `scripts/make_single_file.py`
+  which inlines the JS (with the base64 wasm) into the HTML — no fetch/XHR at all, which is what
+  makes `file://` work. `playtest.mjs --file` loads the page with no HTTP server;
+  `launch.mjs` honours `CHROME_PATH`.
+* **Screenshot capture** (`--screenshot`, PROMPT §9.8): `src/render/screenshot.{h,cpp}` implements
+  `bgfx::CallbackI` and writes PNG via bimg; `--screenshot-frame` (or 20 frames before `--frames`
+  exit) triggers the capture; `--play` skips the title screen for unattended captures.
+* **Release packaging support**: `native-release` preset, static MSVC CRT, `WIN32_EXECUTABLE`,
+  procedural AppImage icon (`scripts/make_icon.py`, no third-party art).
+* **CI**: new `browser` job (headless Chromium playtest of the web build: default + persist
+  scripts, zero console errors enforced); ci.yml runs green on the PR head (all jobs except the
+  Pages deploy, which needs Pages enabled by the owner — see #10).
+* NOT verified locally: native windowed rendering (no X/GL in this sandbox), AppImage/macOS/Windows
+  packaging (runner-only), and the release workflow itself (must be dispatched from a runner).

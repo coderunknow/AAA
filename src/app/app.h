@@ -23,6 +23,9 @@ struct AppOptions {
   std::string qaScenario;     // ?qa=camp|shrine|wolves (visual QA only)
   std::string renderer;       // --renderer d3d11|vulkan|opengl|metal|noop ("" = platform chain)
   bool showVersion = false;   // --version: print the version and exit
+  bool play = false;          // --play: skip the title screen (QA / benchmark captures)
+  std::string screenshotPath;  // --screenshot <path>: capture the backbuffer to PNG (PROMPT §9.8)
+  int screenshotFrame = 300;   // playing-frame index at which to capture
 };
 
 AppOptions parseOptions(int argc, char** argv);
@@ -71,6 +74,8 @@ class App {
   double accumulator_ = 0.0;
   float interpAlpha_ = 0.0f;
   bool saveFailedNotified_ = false;  // tell the player once when persistence fails
+  bool screenshotRequested_ = false;
+  int screenshotTarget_ = 300;
 };
 
 }  // namespace aaa

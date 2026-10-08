@@ -7,6 +7,7 @@
 
 #include "core/math.h"
 #include "render/atmosphere.h"
+#include "render/screenshot.h"
 #include "render/ui_renderer.h"
 
 namespace aaa {
@@ -84,6 +85,12 @@ class Renderer {
   // In-engine UI layer (menus, HUD, toasts): draw into it between beginFrame and render.
   UiRenderer& ui() { return ui_; }
 
+  // QA: capture the backbuffer to a PNG file (PROMPT §9.8). The write completes
+  // asynchronously a frame or two later; poll screenshotDone() / takeScreenshotDone().
+  void requestScreenshot(const std::string& path);
+  bool screenshotDone() const { return screenshotDone_; }
+  void takeScreenshotDone() { screenshotDone_ = false; }
+
  private:
   void createTargets();
   void destroyTargets();
@@ -111,6 +118,8 @@ class Renderer {
   std::unique_ptr<ObjectRenderer> objects_;
   std::unique_ptr<FireRenderer> fire_;
   UiRenderer ui_;
+  ScreenshotCallback screenshotCb_;
+  bool screenshotDone_ = false;
 
   bgfx::FrameBufferHandle hdrFb_ = BGFX_INVALID_HANDLE, shadowFb_ = BGFX_INVALID_HANDLE;
   bgfx::TextureHandle hdrColor_ = BGFX_INVALID_HANDLE, shadowTex_ = BGFX_INVALID_HANDLE;

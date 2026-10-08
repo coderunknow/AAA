@@ -16,10 +16,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(MSVC)
+  # Static CRT for portable release packages (PROMPT §9.2): the shipped .exe must not
+  # depend on VCRUNTIME/MSVCR DLLs. Set before any target (incl. fetched deps) is created.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "MSVC runtime library" FORCE)
+endif()
+
 option(AAA_BUILD_GAME   "Build the game executable" ON)
 option(AAA_BUILD_TESTS  "Build unit tests" ON)
 option(AAA_BUILD_TOOLS  "Build host tools (shaderc) — native only" OFF)
 option(AAA_RENDERER_NOOP "Native only: build bgfx with only the Noop renderer (headless; no X11/GL needed)" OFF)
+option(AAA_SINGLE_FILE  "Web only: one self-contained HTML (data+wasm inlined; opens from file://)" OFF)
 set(AAA_SHADERC "" CACHE FILEPATH "Path to a host bgfx shaderc executable (required for web builds)")
 
 if(EMSCRIPTEN)

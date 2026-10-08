@@ -8,6 +8,10 @@ add_executable(mistpine main.cpp app.cpp)
 target_link_libraries(mistpine PRIVATE aaa_ui aaa_render aaa_platform)
 aaa_target_defaults(mistpine)
 add_dependencies(mistpine aaa_shaders)
+if(WIN32)
+  # A windowed game: no console window in the packaged .exe (PROMPT §9.2).
+  set_target_properties(mistpine PROPERTIES WIN32_EXECUTABLE ON)
+endif()
 
 if(EMSCRIPTEN)
   set_target_properties(mistpine PROPERTIES OUTPUT_NAME "index" SUFFIX ".html")
@@ -20,6 +24,18 @@ if(EMSCRIPTEN)
     "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=256MB" "-sSTACK_SIZE=1MB"
     "-sENVIRONMENT=web" "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8']"
     "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']")
+  if(AAA_SINGLE_FILE)
+    # One self-contained HTML: the .data bundle is embedded in the wasm and the wasm
+    # is embedded (base64) in the JS, so the page needs no fetch at all — which is
+    # what makes it open directly from file:// in Chrome (PROMPT §9.1).
+    target_link_options(mistpine PRIVATE "-sSINGLE_FILE=1")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_custom_command(TARGET mistpine POST_BUILD
+      COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/make_single_file.py"
+              "$<TARGET_FILE_DIR:mistpine>"
+      COMMENT "inline js -> single-file html"
+      VERBATIM)
+  endif()
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     # (No -gsource-map: needs llvm-dwarfdump, absent from the sandbox LLVM; DWARF from -g is kept.)
     target_link_options(mistpine PRIVATE "-sASSERTIONS=1")

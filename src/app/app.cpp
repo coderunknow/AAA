@@ -75,6 +75,7 @@ AppOptions parseOptions(int argc, char** argv) {
   if (param("debug") == "1") o.debugOverlay = true;
   if (!param("frames").empty()) o.maxFrames = std::atoi(param("frames").c_str());
   if (param("new") == "1") o.newGame = true;
+  if (param("play") == "1") o.play = true;
   o.qaScenario = param("qa");
   o.assetRoot = "/assets";  // Emscripten preloaded data bundle mount point
 #endif
@@ -188,6 +189,9 @@ bool App::init(const AppOptions& opts) {
   }
   if (opts.startHours >= 0.0f) game_->timeOfDay().setHours(opts.startHours);
   if (!opts.headless) audio_.init();
+  // Capture point for --screenshot: never later than 20 frames before a --frames exit.
+  screenshotTarget_ = opts_.screenshotFrame;
+  if (opts_.maxFrames > 0) screenshotTarget_ = std::min(screenshotTarget_, std::max(1, opts_.maxFrames - 20));
   lastTicks_ = SDL_GetTicksNS();
   reportLoading();
   return true;
@@ -331,6 +335,16 @@ bool App::iterate() {
   ui_.draw(*game_);
   renderer_.render(*game_, dt, interpAlpha_);
   ++frames_;
+  // QA screenshot capture (PROMPT §9.8): request once at the target frame, then
+  // exit when bgfx has written the PNG (the callback fires a frame or two later).
+  if (!opts_.screenshotPath.empty() && !screenshotRequested_ && frames_ >= screenshotTarget_) {
+    renderer_.requestScreenshot(opts_.screenshotPath);
+    screenshotRequested_ = true;
+  }
+  if (screenshotRequested_ && renderer_.screenshotDone()) {
+    AAA_LOG_INFO("screenshot written, exiting");
+    return false;
+  }
   // Milestone log (also lets automated browser QA confirm frames are being presented).
   if (frames_ == 1 || frames_ == 10 || frames_ == 100 || frames_ % 1000 == 0)
     AAA_LOG_INFO("frame %d presented (%.1f s since start, last dt %.1f ms)", frames_, (nowMs() - loadStartMs_) / 1000.0,

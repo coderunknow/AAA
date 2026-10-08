@@ -7,10 +7,10 @@ aaa_add_shaders(aaa_shaders SHADERS
   vs_ui.sc fs_ui.sc)
 
 add_library(aaa_render STATIC
-  renderer.cpp gpu_mesh.cpp shader_library.cpp atmosphere.cpp frustum.cpp
+  renderer.cpp gpu_mesh.cpp shader_library.cpp atmosphere.cpp frustum.cpp screenshot.cpp
   terrain_renderer.cpp prop_renderer.cpp character_renderer.cpp water_renderer.cpp object_renderer.cpp
   ui_renderer.cpp)
-target_link_libraries(aaa_render PUBLIC aaa_game aaa_procgen bgfx bx)
+target_link_libraries(aaa_render PUBLIC aaa_game aaa_procgen bgfx bx bimg)
 add_dependencies(aaa_render aaa_shaders)
 aaa_target_defaults(aaa_render)
 # stb_truetype (MIT / public domain, bundled with the pinned bgfx) builds the UI font
