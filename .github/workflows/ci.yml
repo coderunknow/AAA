@@ -70,8 +70,14 @@ jobs:
           name: shaderc
           path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
       - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
-      - run: cmake --preset native-dev -DAAA_BUILD_TESTS=OFF
-      - run: cmake --build --preset native-dev
+      - name: Configure native-dev
+        run: |
+          cmake --preset native-dev -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/cfg.log "native-dev configure failed"; exit 1; }
+      - name: Build native-dev
+        run: |
+          cmake --build --preset native-dev > /tmp/build.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/build.log "native-dev build failed"; exit 1; }
 
   web:
     name: WebAssembly release
