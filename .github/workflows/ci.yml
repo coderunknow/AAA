@@ -48,15 +48,15 @@ jobs:
       - name: Configure native-headless
         run: |
           cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "native-headless configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "native-headless configure failed"; exit 1; }
       - name: Build native-headless
         run: |
           cmake --build --preset native-headless > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "native-headless build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "native-headless build failed"; exit 1; }
       - name: Test native-headless
         run: |
           ctest --preset native-headless > /tmp/ctest.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/ctest.log "native-headless ctest failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/ctest.log "native-headless ctest failed"; exit 1; }
 
   native-windowed:
     name: Native windowed build (compile + link)
@@ -75,11 +75,11 @@ jobs:
       - name: Configure native-dev
         run: |
           cmake --preset native-dev -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "native-dev configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "native-dev configure failed"; exit 1; }
       - name: Build native-dev
         run: |
           cmake --build --preset native-dev > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "native-dev build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "native-dev build failed"; exit 1; }
 
   web:
     name: WebAssembly release
@@ -99,11 +99,11 @@ jobs:
       - name: Configure web-release
         run: |
           EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "web-release configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "web-release configure failed"; exit 1; }
       - name: Build web-release
         run: |
           cmake --build --preset web-release > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "web-release build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "web-release build failed"; exit 1; }
       - name: Collect site
         run: |
           mkdir -p site
@@ -159,12 +159,12 @@ jobs:
         run: |
           cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-default \
             --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/playtest.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/playtest.log "browser playtest (default) failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/playtest.log "browser playtest (default) failed"; exit 1; }
       - name: "Playtest (persist script: save round trip)"
         run: |
           cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-persist \
             --query "hours=9&quality=low" --script persist --width 960 --height 540 > /tmp/playtest2.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/playtest2.log "browser playtest (persist) failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/playtest2.log "browser playtest (persist) failed"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -186,15 +186,15 @@ jobs:
       - name: Configure (ASan + UBSan)
         run: |
           cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SANITIZERS=ON > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "sanitizers configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "sanitizers configure failed"; exit 1; }
       - name: Build
         run: |
           cmake --build --preset native-headless > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "sanitizers build failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "sanitizers build failed"; exit 1; }
       - name: Test
         run: |
           ctest --preset native-headless > /tmp/ctest.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/ctest.log "sanitizers ctest failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/ctest.log "sanitizers ctest failed"; exit 1; }
 
   shader-profiles:
     name: Shader profiles (essl, glsl, spirv, metal)
@@ -211,9 +211,9 @@ jobs:
       - name: Compile every profile the Linux shaderc can emit
         run: |
           cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SHADER_PROFILE_SET=host-all > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "shader-profiles configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "shader-profiles configure failed"; exit 1; }
           cmake --build --preset native-headless --target aaa_shaders > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "shader compilation failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "shader compilation failed"; exit 1; }
           ls build/native-headless/assets/shaders/
 
   shader-profiles-windows:
@@ -260,7 +260,7 @@ jobs:
       - name: Compile the Windows profile set (dx11, spirv, glsl)
         run: |
           cmake --preset native-dev -DAAA_BUILD_TESTS=OFF -DAAA_SHADER_PROFILE_SET=windows > /tmp/cfg.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/cfg.log "windows shader-profiles configure failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "windows shader-profiles configure failed"; exit 1; }
           cmake --build --preset native-dev --target aaa_shaders > /tmp/build.log 2>&1 ||
-            { scripts/ci_annotate_failure.sh /tmp/build.log "windows shader compilation failed"; exit 1; }
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "windows shader compilation failed"; exit 1; }
           ls build/native-dev/assets/shaders/

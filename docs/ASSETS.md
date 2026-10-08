@@ -9,7 +9,7 @@ vertical slice is generated at load time by code in this repository, from a fixe
 | Vegetation (pines, bamboo, ferns, grass, shrubs) | `src/procgen/vegetation_meshes.cpp` | Procedural branch/leaf-card meshes |
 | Rocks and limestone outcrops | `src/procgen/rock_meshes.cpp` | Displaced, faceted procedural meshes |
 | Abandoned shrine (gate, hall, steps, lantern, collapsed roof) | `src/world/shrine.cpp`, `src/procgen/structure_meshes.cpp` | Original design: generic East-Asian timber vocabulary, no reference structure copied |
-| Player character and wolves | `src/render/character_renderer.cpp`, `src/game/wolf_pose.cpp` | Procedural rigid-part bodies with code-driven animation |
+| Player character and wolves | `src/game/skin.cpp`, `src/game/player_rig.cpp`, `src/game/wolf_rig.cpp` (meshes/poses), `src/render/skin_renderer.cpp` + `shaders/vs_skin.sc`/`fs_skin.sc` (GPU skinning) | Procedural skinned meshes and skeletons generated in code; procedural gait, foot IK, secondary motion, blended states |
 | Campfire, embers, flames | `src/render/object_renderer.cpp`, `shaders/vs_fire.sc`, `shaders/fs_fire.sc` | Procedural geometry + shader-animated billboards |
 | Surface detail texture (bark/stone/soil micro-detail) | `src/procgen/textures.cpp` (uploaded by `src/render/prop_renderer.cpp`) | Procedural noise texture with mip chain |
 | Sky, fog, water, lighting | `shaders/*.sc` | Analytic sky / height fog / shading |

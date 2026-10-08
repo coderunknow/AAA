@@ -47,20 +47,27 @@ float ThirdPersonCamera::obstructionDistance(Vec3 pivot, Vec3 dir, float maxDist
 void ThirdPersonCamera::update(float dt, const InputFrame& input, const PlayerController& player, const World& world) {
   prevView_ = view_;  // interpolation source for render-time smoothing
   const CameraTuning& T = tuning_;
-  // Look input.
-  yaw_ += input.lookDelta.x * T.mouseSensitivity + input.lookRate.x * T.stickSensitivity * dt;
-  pitch_ -= input.lookDelta.y * T.mouseSensitivity + input.lookRate.y * T.stickSensitivity * dt * 0.7f;
-  pitch_ = clampf(pitch_, T.pitchMin, T.pitchMax);
-  yaw_ = wrapAngle(yaw_);
-  desiredDistance_ = clampf(desiredDistance_ - input.zoom * 0.5f, T.minDistance, T.maxDistance);
+  if (benchActive_) {
+    // Benchmark: deterministic framing, no look input, no auto-recentre.
+    yaw_ = wrapAngle(benchYaw_);
+    pitch_ = clampf(benchPitch_, T.pitchMin, T.pitchMax);
+    desiredDistance_ = clampf(benchDistance_, T.minDistance, T.maxDistance);
+  } else {
+    // Look input.
+    yaw_ += input.lookDelta.x * T.mouseSensitivity + input.lookRate.x * T.stickSensitivity * dt;
+    pitch_ -= input.lookDelta.y * T.mouseSensitivity + input.lookRate.y * T.stickSensitivity * dt * 0.7f;
+    pitch_ = clampf(pitch_, T.pitchMin, T.pitchMax);
+    yaw_ = wrapAngle(yaw_);
+    desiredDistance_ = clampf(desiredDistance_ - input.zoom * 0.5f, T.minDistance, T.maxDistance);
 
-  // Gentle auto-recentre behind a moving player when the user is not steering the camera.
-  const bool userLooking = std::fabs(input.lookDelta.x) + std::fabs(input.lookDelta.y) > 0.01f ||
-                           std::fabs(input.lookRate.x) + std::fabs(input.lookRate.y) > 0.05f;
-  idleTime_ = userLooking ? 0.0f : idleTime_ + dt;
-  if (idleTime_ > 1.5f && player.horizontalSpeed() > 2.0f) {
-    const float k = dampFactor(1.6f, dt) * smoothstep(1.5f, 3.0f, idleTime_);
-    yaw_ = wrapAngle(yaw_ + wrapAngle(player.facingYaw() - yaw_) * k);
+    // Gentle auto-recentre behind a moving player when the user is not steering the camera.
+    const bool userLooking = std::fabs(input.lookDelta.x) + std::fabs(input.lookDelta.y) > 0.01f ||
+                             std::fabs(input.lookRate.x) + std::fabs(input.lookRate.y) > 0.05f;
+    idleTime_ = userLooking ? 0.0f : idleTime_ + dt;
+    if (idleTime_ > 1.5f && player.horizontalSpeed() > 2.0f) {
+      const float k = dampFactor(1.6f, dt) * smoothstep(1.5f, 3.0f, idleTime_);
+      yaw_ = wrapAngle(yaw_ + wrapAngle(player.facingYaw() - yaw_) * k);
+    }
   }
 
   // Pivot follows the player with light smoothing (vertical a bit softer for steps).

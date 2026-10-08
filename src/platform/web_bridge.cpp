@@ -15,6 +15,7 @@ EM_JS(void, aaa_js_state, (const char* j), {
   // Read-only state snapshot for the automated browser playtest.
   window.__mistpineState = JSON.parse(UTF8ToString(j));
 });
+EM_JS(void, aaa_js_bench, (const char* j), { window.__mistpineBench = UTF8ToString(j); });
 #endif
 
 namespace aaa::web {

@@ -534,6 +534,34 @@ bool Game::applyScenario(const std::string& name) {
     wildlife_.gatherAround(pp + Vec3{facing.x, 0.0f, facing.y} * 6.0f, *world_);
     return true;
   }
+  // --- Fixed-framing scenarios for the visual QA matrix (PROMPT §12) -----------------------
+  // Each pins the time of day and locks the camera with a fixed view, so a screenshot
+  // is reproducible at any frame rate.
+  if (name == "spawn") {
+    time_.setHours(9.0f);  // misty morning at the spawn point, default framing
+    camera_.reset(player_);
+    return true;
+  }
+  if (name == "character") {
+    // Close-up of the skinned survivor: the camera stands just in front of the player,
+    // slightly off-axis, looking at them (camera forward = -(player facing)).
+    time_.setHours(10.5f);
+    camera_.reset(player_);
+    camera_.setBenchView(player_.facingYaw() + kPi - 0.45f, radians(-6.0f), 1.9f);
+    return true;
+  }
+  if (name == "dusk") {
+    time_.setHours(18.6f);  // last light over the forest
+    camera_.reset(player_);
+    camera_.setBenchView(player_.facingYaw() - 0.9f, radians(-6.0f), 6.5f);
+    return true;
+  }
+  if (name == "dawn") {
+    time_.setHours(6.1f);  // misty dawn, low sun
+    camera_.reset(player_);
+    camera_.setBenchView(player_.facingYaw() + 0.9f, radians(-10.0f), 7.5f);
+    return true;
+  }
   return false;
 }
 

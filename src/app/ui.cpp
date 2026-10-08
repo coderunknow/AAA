@@ -205,8 +205,10 @@ void Ui::update(float dt, const Game& game, const UiMouse& mouse, UiActions& out
   for (size_t i = 0; i < buttons_.size(); ++i)
     if (hit(buttons_[i], mouse.pos)) hover_ = static_cast<int>(i);
   if (mouse.click) {
+    bool handled = false;
     for (const Btn& b : buttons_) {
       if (!hit(b, mouse.pos)) continue;
+      handled = true;
       if (b.id == "begin" || b.id == "continue") {
         out.startOrResume = true;
       } else if (b.id == "restart") {
@@ -257,6 +259,10 @@ void Ui::update(float dt, const Game& game, const UiMouse& mouse, UiActions& out
       }
       break;
     }
+    // The DOM veil started / resumed on a click anywhere (only the quiet "Start a new
+    // journey" button was excepted); keep that behaviour so a click on the artwork,
+    // not just on the button, begins or resumes the journey.
+    if (!handled && (menu_ == Menu::Title || menu_ == Menu::Pause)) out.startOrResume = true;
   }
 }
 

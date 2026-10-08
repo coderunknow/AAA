@@ -14,6 +14,7 @@
 namespace aaa {
 
 class Game;
+struct CameraView;
 class ShaderLibrary;
 class TerrainRenderer;
 class PropRenderer;
@@ -36,6 +37,19 @@ struct RenderSettings {
   float terrainLod = 1.0f;
   int textureQuality = 2;       // 0..2 (procedural texture resolution)
   bool vsync = true;
+  // Post effects (M4). Each has a Low/Medium/High behaviour and a capability fallback.
+  bool bloom = true;            // downsample/filter/upsample bloom chain
+  int bloomIterations = 2;      // separable blur iterations (H+V each)
+  float bloomStrength = 0.55f;
+  float bloomThreshold = 0.85f;
+  bool shafts = true;           // half-res screen-space sun shafts
+  float shaftsStrength = 0.32f;
+  int shaftTaps = 48;
+  bool ssao = true;             // half-res depth-based SSAO (High only)
+  int ssaoSamples = 16;
+  float ssaoRadius = 1.1f;
+  float ssaoIntensity = 1.4f;
+  bool fxaa = true;             // FXAA-lite in the tonemap pass
   static RenderSettings preset(QualityPreset q);
 };
 
@@ -83,6 +97,9 @@ class Renderer {
   uint32_t frameCount() const { return frame_; }
   uint32_t backbufferWidth() const { return width_; }
   uint32_t backbufferHeight() const { return height_; }
+  // Per-frame timings for the benchmark (PROMPT §11): CPU submit time and, where the
+  // backend exposes GPU timers, GPU time. gpuAvailable=false when there are no GPU timers.
+  void frameStats(float& cpuMs, float& gpuMs, bool& gpuAvailable) const;
   // In-engine UI layer (menus, HUD, toasts): draw into it between beginFrame and render.
   UiRenderer& ui() { return ui_; }
 
@@ -97,6 +114,12 @@ class Renderer {
   void destroyTargets();
   void setFrameUniforms(const Game& game, const float* shadowMtx);
   void drawDebug(const Game& game, float realDt);
+  // Post-effect chain (M4): bloom, sun shafts, SSAO — all half-resolution, all
+  // optional per quality preset, all with capability fallbacks.
+  void submitPostEffects(const CameraView& cv, const float* proj, const float* viewProj, bool originBL, bool homDepth);
+  void submitFullscreen(bgfx::ViewId view, bgfx::FrameBufferHandle fb, uint32_t w, uint32_t h,
+                        bgfx::ProgramHandle prog, bgfx::UniformHandle sampler, bgfx::TextureHandle src,
+                        uint64_t samplerFlags);
 
   RendererInit init_;
   RendererInfo info_;
@@ -110,6 +133,7 @@ class Renderer {
   float time_ = 0.0f;
   float smoothDt_ = 1.0f / 60.0f;
   AtmosphereState atm_{};
+  bool depthSampleable_ = false;  // caps: the scene depth can be sampled (SSAO)
 
   std::unique_ptr<ShaderLibrary> shaders_;
   std::unique_ptr<TerrainRenderer> terrain_;
@@ -128,12 +152,29 @@ class Renderer {
 
   bgfx::FrameBufferHandle hdrFb_ = BGFX_INVALID_HANDLE, shadowFb_ = BGFX_INVALID_HANDLE;
   bgfx::TextureHandle hdrColor_ = BGFX_INVALID_HANDLE, shadowTex_ = BGFX_INVALID_HANDLE;
+  bgfx::TextureHandle depthTex_ = BGFX_INVALID_HANDLE;  // sampleable scene depth (SSAO)
+  // Bloom chain (half scene resolution): bright pass + ping-pong blur.
+  bgfx::FrameBufferHandle bloomFb_[3] = {BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE};
+  bgfx::TextureHandle bloomBright_ = BGFX_INVALID_HANDLE, bloomBlur_[2] = {BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE};
+  // Sun shafts (half scene resolution, radial blur of the bright pass).
+  bgfx::FrameBufferHandle shaftsFb_ = BGFX_INVALID_HANDLE;
+  bgfx::TextureHandle shaftsTex_ = BGFX_INVALID_HANDLE;
+  // SSAO (half scene resolution, single channel).
+  bgfx::FrameBufferHandle ssaoFb_[3] = {BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE};
+  bgfx::TextureHandle ssaoRaw_ = BGFX_INVALID_HANDLE, ssaoBlur_[2] = {BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE};
+  uint32_t fxW_ = 0, fxH_ = 0;  // half-res effect target size
   bgfx::VertexBufferHandle fullscreenVb_ = BGFX_INVALID_HANDLE;
   bgfx::ProgramHandle skyProg_ = BGFX_INVALID_HANDLE, tonemapProg_ = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle brightProg_ = BGFX_INVALID_HANDLE, blurProg_ = BGFX_INVALID_HANDLE;
+  bgfx::ProgramHandle shaftsProg_ = BGFX_INVALID_HANDLE, ssaoProg_ = BGFX_INVALID_HANDLE;
 
   struct Uniforms {
     bgfx::UniformHandle sunDir, sunColor, skyAmbient, groundAmbient, fogColor, fogParams, camPos, wind, shadowParams,
         shadowMtx, skyZenith, skyHorizon, fireLight, fireColor, invViewProjSky, screenParams, post, grade, sHdr, sShadow;
+    // Post chain.
+    bgfx::UniformHandle bright, blurDir, sunScreen, texel, effects, proj, invProj, ssaoParams;
+    bgfx::UniformHandle kernel;  // vec4[16]
+    bgfx::UniformHandle sBloom, sShafts, sSsao, sBlur, sDepth;
   } u_{};
 };
 

@@ -4,6 +4,7 @@ aaa_add_shaders(aaa_shaders SHADERS
   vs_character.sc fs_character.sc vs_character_shadow.sc
   vs_skin.sc fs_skin.sc vs_skin_shadow.sc
   vs_fullscreen.sc fs_sky.sc fs_tonemap.sc
+  fs_bloom_bright.sc fs_blur.sc fs_shafts.sc fs_ssao.sc
   vs_water.sc fs_water.sc vs_fire.sc fs_fire.sc
   vs_ui.sc fs_ui.sc)
 

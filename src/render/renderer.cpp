@@ -22,7 +22,22 @@
 
 namespace aaa {
 namespace {
-enum : bgfx::ViewId { kViewShadow0 = 0, kViewShadow1 = 1, kViewScene = 2, kViewPost = 3, kViewUi = 4 };
+// View IDs double as execution order (all views are ViewMode::Sequential, which bgfx
+// executes in ascending ID order): shadows -> scene -> post effects -> tonemap -> UI.
+enum : bgfx::ViewId {
+  kViewShadow0 = 0,
+  kViewShadow1 = 1,
+  kViewScene = 2,
+  kViewBloomBright = 3,
+  kViewBloomBlurA = 4,
+  kViewBloomBlurB = 5,
+  kViewShafts = 6,
+  kViewSsao = 7,
+  kViewSsaoBlurA = 8,
+  kViewSsaoBlurB = 9,
+  kViewPost = 10,
+  kViewUi = 11
+};
 constexpr float kNear = 0.15f, kFar = 2400.0f;
 
 bx::Vec3 bv(Vec3 v) { return {v.x, v.y, v.z}; }
@@ -42,10 +57,13 @@ RenderSettings RenderSettings::preset(QualityPreset q) {
     case QualityPreset::Low:
       s.renderScale = 0.67f; s.shadowSize = 1024; s.shadowSplit = 22.0f; s.shadowFar = 110.0f;
       s.propDistance = 0.6f; s.grassDensity = 0.35f; s.terrainLod = 0.6f; s.textureQuality = 0;
+      s.bloom = false; s.shafts = false; s.ssao = false; s.fxaa = false;
       break;
     case QualityPreset::Medium:
       s.renderScale = 0.85f; s.shadowSize = 1536; s.shadowSplit = 26.0f; s.shadowFar = 140.0f;
       s.propDistance = 0.8f; s.grassDensity = 0.65f; s.terrainLod = 0.8f; s.textureQuality = 1;
+      s.bloomIterations = 1; s.bloomStrength = 0.45f;
+      s.shafts = false; s.ssao = false; s.fxaa = true;
       break;
     case QualityPreset::High:
       break;  // defaults (target: integrated laptop GPU class, e.g. Iris Xe / M1)
@@ -228,6 +246,13 @@ bool Renderer::init(const RendererInit& in) {
   bgfx::setViewName(kViewShadow0, "shadow near");
   bgfx::setViewName(kViewShadow1, "shadow far");
   bgfx::setViewName(kViewScene, "scene");
+  bgfx::setViewName(kViewBloomBright, "bloom bright");
+  bgfx::setViewName(kViewBloomBlurA, "bloom blur H");
+  bgfx::setViewName(kViewBloomBlurB, "bloom blur V");
+  bgfx::setViewName(kViewShafts, "sun shafts");
+  bgfx::setViewName(kViewSsao, "ssao");
+  bgfx::setViewName(kViewSsaoBlurA, "ssao blur H");
+  bgfx::setViewName(kViewSsaoBlurB, "ssao blur V");
   bgfx::setViewName(kViewPost, "post");
   bgfx::setViewName(kViewUi, "ui");
   ui_.resize(width_, height_);
@@ -248,7 +273,9 @@ void Renderer::shutdown() {
   if (bgfx::isValid(fullscreenVb_)) bgfx::destroy(fullscreenVb_);
   for (bgfx::UniformHandle h : {u_.sunDir, u_.sunColor, u_.skyAmbient, u_.groundAmbient, u_.fogColor, u_.fogParams,
                                 u_.camPos, u_.wind, u_.shadowParams, u_.shadowMtx, u_.skyZenith, u_.skyHorizon,
-                                u_.invViewProjSky, u_.screenParams, u_.post, u_.grade, u_.sHdr, u_.sShadow})
+                                u_.invViewProjSky, u_.screenParams, u_.post, u_.grade, u_.sHdr, u_.sShadow, u_.bright,
+                                u_.blurDir, u_.sunScreen, u_.texel, u_.effects, u_.proj, u_.invProj, u_.ssaoParams,
+                                u_.kernel, u_.sBloom, u_.sShafts, u_.sSsao, u_.sBlur, u_.sDepth})
     if (bgfx::isValid(h)) bgfx::destroy(h);
   shaders_.reset();
   bgfx::shutdown();
@@ -262,25 +289,99 @@ void Renderer::destroyTargets() {
   shadowFb_ = BGFX_INVALID_HANDLE;
   hdrColor_ = BGFX_INVALID_HANDLE;
   shadowTex_ = BGFX_INVALID_HANDLE;
+  depthTex_ = BGFX_INVALID_HANDLE;
+  for (int i = 0; i < 3; ++i) {
+    if (bgfx::isValid(bloomFb_[i])) bgfx::destroy(bloomFb_[i]);
+    if (bgfx::isValid(ssaoFb_[i])) bgfx::destroy(ssaoFb_[i]);
+    bloomFb_[i] = BGFX_INVALID_HANDLE;
+    ssaoFb_[i] = BGFX_INVALID_HANDLE;
+  }
+  bloomBright_ = BGFX_INVALID_HANDLE;
+  bloomBlur_[0] = bloomBlur_[1] = BGFX_INVALID_HANDLE;
+  shaftsTex_ = BGFX_INVALID_HANDLE;
+  ssaoRaw_ = BGFX_INVALID_HANDLE;
+  ssaoBlur_[0] = ssaoBlur_[1] = BGFX_INVALID_HANDLE;
+  if (bgfx::isValid(shaftsFb_)) bgfx::destroy(shaftsFb_);
+  shaftsFb_ = BGFX_INVALID_HANDLE;
 }
 
 void Renderer::createTargets() {
   destroyTargets();
   sceneW_ = std::max(1u, static_cast<uint32_t>(width_ * settings_.renderScale));
   sceneH_ = std::max(1u, static_cast<uint32_t>(height_ * settings_.renderScale));
+  fxW_ = std::max(1u, sceneW_ / 2);
+  fxH_ = std::max(1u, sceneH_ / 2);
   const uint64_t rtFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_UVW_CLAMP;
   const bgfx::TextureFormat::Enum colorFmt = info_.hdrTarget ? bgfx::TextureFormat::RGBA16F : bgfx::TextureFormat::RGBA8;
-  bgfx::TextureHandle hdr[2] = {
-      bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1, colorFmt, rtFlags),
-      bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1,
-                            bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT_WRITE_ONLY)};
-  hdrColor_ = hdr[0];
-  hdrFb_ = bgfx::createFrameBuffer(2, hdr, true);
+  const bgfx::Caps* caps = bgfx::getCaps();
+  // Pick a depth format that is both renderable and sampleable when the backend
+  // offers one (SSAO reconstructs view positions from it). Otherwise fall back to
+  // a write-only depth attachment and leave SSAO off.
+  depthSampleable_ = false;
+  bgfx::TextureFormat::Enum depthFmt = bgfx::TextureFormat::D24S8;
+  for (const bgfx::TextureFormat::Enum f :
+       {bgfx::TextureFormat::D24, bgfx::TextureFormat::D24S8, bgfx::TextureFormat::D32F}) {
+    const uint64_t bits = caps->formats[f];
+    if ((bits & BGFX_CAPS_FORMAT_TEXTURE_2D) != 0 && (bits & BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER) != 0) {
+      depthFmt = f;
+      depthSampleable_ = true;
+      break;
+    }
+  }
+  if (!depthSampleable_ && settings_.ssao) {
+    settings_.ssao = false;
+    AAA_LOG_INFO("SSAO disabled: no sampleable depth format on this backend");
+  }
+  // Scene colour + depth. The depth is point-sampled so it is never interpolated.
+  hdrColor_ = bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1, colorFmt,
+                                    rtFlags);
+  depthTex_ = bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1, depthFmt,
+                                    depthSampleable_ ? (BGFX_TEXTURE_RT | BGFX_SAMPLER_UVW_CLAMP | BGFX_SAMPLER_POINT)
+                                                     : BGFX_TEXTURE_RT_WRITE_ONLY);
+  if (bgfx::isValid(hdrColor_) && bgfx::isValid(depthTex_)) {
+    bgfx::TextureHandle hdr[2] = {hdrColor_, depthTex_};
+    hdrFb_ = bgfx::createFrameBuffer(2, hdr, true);
+  } else {
+    hdrFb_ = BGFX_INVALID_HANDLE;
+  }
   if (settings_.shadows) {
     shadowTex_ = bgfx::createTexture2D(static_cast<uint16_t>(settings_.shadowSize * 2),
                                        static_cast<uint16_t>(settings_.shadowSize), false, 1, bgfx::TextureFormat::D16,
                                        BGFX_TEXTURE_RT | BGFX_SAMPLER_COMPARE_LEQUAL | BGFX_SAMPLER_UVW_CLAMP);
     shadowFb_ = bgfx::createFrameBuffer(1, &shadowTex_, true);
+  }
+  // --- bloom chain (half resolution, linear sampling so the tonemap upsample is smooth) ---
+  if (settings_.bloom && bgfx::isValid(hdrFb_)) {
+    bloomBright_ = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1, colorFmt,
+                                         rtFlags);
+    for (int i = 0; i < 2; ++i)
+      bloomBlur_[i] = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1,
+                                            colorFmt, rtFlags);
+    if (bgfx::isValid(bloomBright_) && bgfx::isValid(bloomBlur_[0]) && bgfx::isValid(bloomBlur_[1])) {
+      bloomFb_[0] = bgfx::createFrameBuffer(1, &bloomBright_, true);
+      bloomFb_[1] = bgfx::createFrameBuffer(1, &bloomBlur_[0], true);
+      bloomFb_[2] = bgfx::createFrameBuffer(1, &bloomBlur_[1], true);
+    }
+  }
+  // --- sun shafts (half resolution) ---
+  if (settings_.shafts && bgfx::isValid(bloomBright_)) {
+    shaftsTex_ = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1, colorFmt,
+                                       rtFlags);
+    if (bgfx::isValid(shaftsTex_)) shaftsFb_ = bgfx::createFrameBuffer(1, &shaftsTex_, true);
+  }
+  // --- SSAO (half resolution, single channel) ---
+  if (settings_.ssao && depthSampleable_ && bgfx::isValid(depthTex_)) {
+    const uint64_t aoFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_UVW_CLAMP;
+    ssaoRaw_ = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1,
+                                     bgfx::TextureFormat::R8, aoFlags);
+    for (int i = 0; i < 2; ++i)
+      ssaoBlur_[i] = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1,
+                                           bgfx::TextureFormat::R8, aoFlags);
+    if (bgfx::isValid(ssaoRaw_) && bgfx::isValid(ssaoBlur_[0]) && bgfx::isValid(ssaoBlur_[1])) {
+      ssaoFb_[0] = bgfx::createFrameBuffer(1, &ssaoRaw_, true);
+      ssaoFb_[1] = bgfx::createFrameBuffer(1, &ssaoBlur_[0], true);
+      ssaoFb_[2] = bgfx::createFrameBuffer(1, &ssaoBlur_[1], true);
+    }
   }
 }
 
@@ -296,6 +397,18 @@ void Renderer::resize(uint32_t w, uint32_t h) {
     bgfx::reset(settings_.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE, &sc);
   }
   createTargets();
+}
+
+void Renderer::frameStats(float& cpuMs, float& gpuMs, bool& gpuAvailable) const {
+  const bgfx::Stats* st = bgfx::getStats();
+  cpuMs = static_cast<float>(double(st->cpuTimeEnd - st->cpuTimeBegin) * 1000.0 / double(st->cpuTimerFreq));
+  if (st->gpuTimerFreq > 0) {
+    gpuMs = static_cast<float>(double(st->gpuTimeEnd - st->gpuTimeBegin) * 1000.0 / double(st->gpuTimerFreq));
+    gpuAvailable = true;
+  } else {
+    gpuMs = 0.0f;
+    gpuAvailable = false;
+  }
 }
 
 void Renderer::requestScreenshot(const std::string& path) {
@@ -336,6 +449,10 @@ bool Renderer::loadStep(const Game& game, double budgetMs) {
     case 0:
       skyProg_ = shaders_->program("vs_fullscreen", "fs_sky");
       tonemapProg_ = shaders_->program("vs_fullscreen", "fs_tonemap");
+      brightProg_ = shaders_->program("vs_fullscreen", "fs_bloom_bright");
+      blurProg_ = shaders_->program("vs_fullscreen", "fs_blur");
+      shaftsProg_ = shaders_->program("vs_fullscreen", "fs_shafts");
+      ssaoProg_ = shaders_->program("vs_fullscreen", "fs_ssao");
       loadStage_ = 1;
       return false;
     case 1:
@@ -566,6 +683,9 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   // Additive flames after the sky (they write no depth, so the sky would overwrite them).
   if (game.phase() != GamePhase::LoadingWorld) fire_->submit(kViewScene, game, cv.eye, frustum);
 
+  // --- post-effect chain (bloom / shafts / SSAO) before tonemapping ---------------------------
+  submitPostEffects(cv, proj, viewProj, originBL, homDepth);
+
   // --- post: tonemap to the backbuffer -------------------------------------------------------
   bgfx::setViewFrameBuffer(kViewPost, BGFX_INVALID_HANDLE);
   bgfx::setViewRect(kViewPost, 0, 0, static_cast<uint16_t>(width_), static_cast<uint16_t>(height_));
@@ -576,10 +696,23 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
     const float post[4] = {atm_.exposure * fade * fade, 1.06f, 0.28f, 1.06f};
     const float grade[4] = {atm_.gradeHighlights.x, atm_.gradeHighlights.y, atm_.gradeHighlights.z, 0.12f};
     const float screen[4] = {originBL ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+    // Effect strengths (0 = off) and the SSAO floor (1 = off).
+    const float effects[4] = {
+        settings_.bloom && bgfx::isValid(bloomBlur_[1]) ? settings_.bloomStrength : 0.0f,
+        settings_.shafts && bgfx::isValid(shaftsTex_) ? settings_.shaftsStrength : 0.0f,
+        settings_.ssao && bgfx::isValid(ssaoBlur_[1]) ? 0.78f : 1.0f,
+        settings_.fxaa ? 1.0f : 0.0f};
+    const float texel[4] = {1.0f / static_cast<float>(sceneW_), 1.0f / static_cast<float>(sceneH_), 0.0f, 0.0f};
     bgfx::setUniform(u_.post, post);
     bgfx::setUniform(u_.grade, grade);
     bgfx::setUniform(u_.screenParams, screen);
+    bgfx::setUniform(u_.effects, effects);
+    bgfx::setUniform(u_.texel, texel);
     bgfx::setTexture(0, u_.sHdr, hdrColor_, BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(1, u_.sBloom, bgfx::isValid(bloomBlur_[1]) ? bloomBlur_[1] : bloomBright_,
+                     BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(2, u_.sShafts, shaftsTex_, BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(3, u_.sSsao, bgfx::isValid(ssaoBlur_[1]) ? ssaoBlur_[1] : ssaoRaw_, BGFX_SAMPLER_UVW_CLAMP);
     bgfx::setVertexBuffer(0, fullscreenVb_);
     // Write alpha too: the browser composites the WebGL canvas with its alpha channel, so an
     // RGB-only write leaves the canvas fully transparent (only the page background shows).

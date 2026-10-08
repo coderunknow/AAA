@@ -1,11 +1,14 @@
 #include "app/app.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <vector>
 
 #include "core/log.h"
 #include "core/version.h"
@@ -58,6 +61,14 @@ AppOptions parseOptions(int argc, char** argv) {
     else if (std::strcmp(a, "--qa") == 0) o.qaScenario = next();
     else if (std::strcmp(a, "--renderer") == 0) o.renderer = next();
     else if (std::strcmp(a, "--version") == 0) o.showVersion = true;
+    else if (std::strcmp(a, "--play") == 0) o.play = true;
+    else if (std::strcmp(a, "--screenshot") == 0) o.screenshotPath = next();
+    else if (std::strcmp(a, "--screenshot-frame") == 0) o.screenshotFrame = std::atoi(next());
+    else if (std::strcmp(a, "--bench") == 0) {
+      o.bench = true;
+      // Optional output path — only when the next token is not another flag.
+      if (i + 1 < argc && argv[i + 1][0] != '-') o.benchPath = argv[++i];
+    }
   }
 #if defined(__EMSCRIPTEN__)
   char* q = aaa_query_string();
@@ -292,8 +303,9 @@ bool App::iterate() {
     }
   }
   // Losing pointer lock (browser Esc) pauses the game, like most browser games.
-  if (!opts_.headless && game_->phase() == GamePhase::Playing && !platform_.pointerLocked() && frames_ > 30 &&
-      !platform_.focused()) {
+  // (Disabled while benchmarking: an unattended window must never stall the run.)
+  if (!opts_.headless && !benchActive_ && game_->phase() == GamePhase::Playing && !platform_.pointerLocked() &&
+      frames_ > 30 && !platform_.focused()) {
     game_->setPaused(true);
     ui_.setMenu(Ui::Menu::Pause);
     saveNow("focus lost");
@@ -335,6 +347,23 @@ bool App::iterate() {
   ui_.draw(*game_);
   renderer_.render(*game_, dt, interpAlpha_);
   ++frames_;
+  // Benchmark: collect this frame's wall/CPU/GPU timings into the current phase.
+  if (benchActive_ && !benchDone_) {
+    const int phase = std::min(2, static_cast<int>(game_->simTime() / kBenchPhaseSeconds));
+    float cpuMs = 0.0f, gpuMs = 0.0f;
+    bool gpuAvail = false;
+    renderer_.frameStats(cpuMs, gpuMs, gpuAvail);
+    BenchPhase& bp = benchPhases_[phase];
+    bp.wallMs.push_back(dt * 1000.0f);
+    bp.cpuMs.push_back(cpuMs);
+    if (gpuAvail) bp.gpuMs.push_back(gpuMs);
+    if (game_->simTime() >= 3.0 * kBenchPhaseSeconds) {
+      writeBenchJson(true);
+      benchDone_ = true;
+      AAA_LOG_INFO("benchmark complete, exiting");
+      return false;
+    }
+  }
   // QA screenshot capture (PROMPT §9.8): request once at the target frame, then
   // exit when bgfx has written the PNG (the callback fires a frame or two later).
   if (!opts_.screenshotPath.empty() && !screenshotRequested_ && frames_ >= screenshotTarget_) {
@@ -354,6 +383,119 @@ bool App::iterate() {
     return false;
   }
   return !quit_;
+}
+
+namespace {
+struct BenchStat {
+  float min = 0.0f, avg = 0.0f, p95 = 0.0f, max = 0.0f;
+};
+BenchStat summarize(std::vector<float> v) {
+  BenchStat s;
+  if (v.empty()) return s;
+  std::sort(v.begin(), v.end());
+  s.min = v.front();
+  s.max = v.back();
+  double sum = 0.0;
+  for (const float x : v) sum += x;
+  s.avg = static_cast<float>(sum / static_cast<double>(v.size()));
+  s.p95 = v[std::min(v.size() - 1, v.size() * 95 / 100)];
+  return s;
+}
+void appendStat(std::string& out, const char* key, const BenchStat& s) {
+  char buf[192];
+  std::snprintf(buf, sizeof(buf), "      \"%s\": {\"min\": %.3f, \"avg\": %.3f, \"p95\": %.3f, \"max\": %.3f}", key,
+                s.min, s.avg, s.p95, s.max);
+  out += buf;
+}
+}  // namespace
+
+void App::updateBench() {
+  const double t = game_->simTime();
+  const int phase = std::min(2, static_cast<int>(t / kBenchPhaseSeconds));
+  if (phase != benchPhase_) {
+    benchPhase_ = phase;
+    game_->timeOfDay().setHours(benchPhases_[static_cast<size_t>(phase)].hours);
+    AAA_LOG_INFO("bench phase %d: %s (%.1f h)", phase, benchPhases_[static_cast<size_t>(phase)].name,
+                 benchPhases_[static_cast<size_t>(phase)].hours);
+  }
+  // One full camera sweep per phase — a pure function of simulation time, so the route
+  // is identical at any render frame rate.
+  const double phaseT = t - static_cast<double>(phase) * kBenchPhaseSeconds;
+  const float yaw = static_cast<float>(phaseT / kBenchPhaseSeconds * kTwoPi) - kPi * 0.5f;
+  game_->camera().setBenchView(yaw, radians(-16.0f), 5.5f);
+}
+
+void App::writeBenchJson(bool completed) {
+  const RendererInfo& ri = renderer_.info();
+  std::string out;
+  out += "{\n";
+  out += std::string("  \"app\": \"Mistpine\",\n  \"version\": \"") + appVersion() + "\",\n";
+  out += std::string("  \"renderer\": \"") + ri.backend + "\",\n";
+  out += std::string("  \"gpu\": \"") + ri.gpu + "\",\n";
+  out += std::string("  \"quality\": \"") + qualityName(renderer_.quality()) + "\",\n";
+  char buf[256];
+  std::snprintf(buf, sizeof(buf), "  \"backbuffer\": [%u, %u],\n", renderer_.backbufferWidth(),
+                renderer_.backbufferHeight());
+  out += buf;
+  out += std::string("  \"completed\": ") + (completed ? "true" : "false") + ",\n";
+  out += "  \"phases\": [\n";
+  std::vector<float> allWall, allCpu, allGpu;
+  bool anyGpu = false;
+  for (int p = 0; p < 3; ++p) {
+    const BenchPhase& bp = benchPhases_[static_cast<size_t>(p)];
+    out += "    {\n";
+    out += std::string("      \"name\": \"") + bp.name + "\",\n";
+    std::snprintf(buf, sizeof(buf), "      \"hours\": %.1f,\n      \"frames\": %zu,\n", bp.hours, bp.wallMs.size());
+    out += buf;
+    appendStat(out, "wallMs", summarize(bp.wallMs));
+    out += ",\n";
+    appendStat(out, "cpuMs", summarize(bp.cpuMs));
+    out += ",\n";
+    if (bp.gpuMs.empty()) {
+      out += "      \"gpuMs\": null\n";
+    } else {
+      appendStat(out, "gpuMs", summarize(bp.gpuMs));
+      out += "\n";
+      anyGpu = true;
+    }
+    out += std::string("    }") + (p < 2 ? ",\n" : "\n");
+    allWall.insert(allWall.end(), bp.wallMs.begin(), bp.wallMs.end());
+    allCpu.insert(allCpu.end(), bp.cpuMs.begin(), bp.cpuMs.end());
+    allGpu.insert(allGpu.end(), bp.gpuMs.begin(), bp.gpuMs.end());
+  }
+  out += "  ],\n";
+  out += "  \"total\": {\n";
+  std::snprintf(buf, sizeof(buf), "    \"frames\": %zu,\n", allWall.size());
+  out += buf;
+  appendStat(out, "wallMs", summarize(allWall));
+  out += ",\n";
+  appendStat(out, "cpuMs", summarize(allCpu));
+  out += ",\n";
+  if (allGpu.empty()) {
+    out += "    \"gpuMs\": null\n";
+  } else {
+    appendStat(out, "gpuMs", summarize(allGpu));
+    out += "\n";
+  }
+  out += "  },\n";
+  out += std::string("  \"gpuTimingAvailable\": ") + (anyGpu ? "true" : "false") + "\n";
+  out += "}\n";
+#if defined(__EMSCRIPTEN__)
+  web::reportBench(out.c_str());
+  AAA_LOG_INFO("benchmark JSON (%zu bytes) exposed as window.__mistpineBench", out.size());
+#else
+  std::ofstream f(opts_.benchPath, std::ios::binary | std::ios::trunc);
+  if (f) {
+    f << out;
+    AAA_LOG_INFO("benchmark JSON written to %s", opts_.benchPath.c_str());
+  } else {
+    AAA_LOG_ERROR("could not write benchmark JSON to %s", opts_.benchPath.c_str());
+  }
+#endif
+  const BenchStat wall = summarize(allWall);
+  const BenchStat cpu = summarize(allCpu);
+  AAA_LOG_INFO("bench summary: %zu frames, wall avg %.2f ms (p95 %.2f), cpu avg %.2f ms (p95 %.2f)%s",
+               allWall.size(), wall.avg, wall.p95, cpu.avg, cpu.p95, anyGpu ? ", gpu timings included" : "");
 }
 
 void App::saveNow(const char* reason) {

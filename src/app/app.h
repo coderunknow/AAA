@@ -1,7 +1,9 @@
 #pragma once
 // Application: wires platform, game simulation and renderer; drives staged loading.
+#include <array>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "app/ui.h"
 #include "game/game.h"
@@ -26,6 +28,8 @@ struct AppOptions {
   bool play = false;          // --play: skip the title screen (QA / benchmark captures)
   std::string screenshotPath;  // --screenshot <path>: capture the backbuffer to PNG (PROMPT §9.8)
   int screenshotFrame = 300;   // playing-frame index at which to capture
+  bool bench = false;         // --bench [path] / ?bench=1: deterministic benchmark route (PROMPT §11)
+  std::string benchPath = "bench.json";
 };
 
 AppOptions parseOptions(int argc, char** argv);
@@ -76,6 +80,20 @@ class App {
   bool saveFailedNotified_ = false;  // tell the player once when persistence fails
   bool screenshotRequested_ = false;
   int screenshotTarget_ = 300;
+  // Benchmark (PROMPT §11): deterministic day -> dusk -> night-campfire route with
+  // per-frame CPU/GPU timing, written as JSON at the end.
+  void updateBench();
+  void writeBenchJson(bool completed);
+  struct BenchPhase {
+    const char* name = "";
+    float hours = 9.0f;
+    std::vector<float> wallMs, cpuMs, gpuMs;
+  };
+  bool benchActive_ = false;
+  bool benchDone_ = false;
+  int benchPhase_ = -1;
+  std::array<BenchPhase, 3> benchPhases_{};
+  static constexpr double kBenchPhaseSeconds = 12.0;  // simulation seconds per phase
 };
 
 }  // namespace aaa

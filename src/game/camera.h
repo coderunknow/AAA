@@ -34,6 +34,16 @@ class ThirdPersonCamera {
  public:
   void reset(const PlayerController& player);
   void update(float dt, const InputFrame& input, const PlayerController& player, const World& world);
+  // Benchmark hook (PROMPT §11): drive the framing deterministically, ignoring
+  // player look input. Cleared with clearBenchView().
+  void setBenchView(float yaw, float pitch, float distance) {
+    benchActive_ = true;
+    benchYaw_ = yaw;
+    benchPitch_ = pitch;
+    benchDistance_ = distance;
+  }
+  void clearBenchView() { benchActive_ = false; }
+  bool benchActive() const { return benchActive_; }
 
   const CameraView& view() const { return view_; }
   // Render-interpolated view between the previous and current simulation state
@@ -65,6 +75,8 @@ class ThirdPersonCamera {
   float fov_ = radians(52.0f);
   Vec3 pivot_;
   float idleTime_ = 0.0f;
+  bool benchActive_ = false;
+  float benchYaw_ = 0.0f, benchPitch_ = 0.0f, benchDistance_ = 0.0f;
 };
 
 }  // namespace aaa

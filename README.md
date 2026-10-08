@@ -50,7 +50,10 @@ abandoned shrine on a terrace up the valley. The pass is closed behind you, and 
 
 `?quality=low|medium|high` · `?hours=0..24` (time-of-day override) · `?new=1` (discard the saved
 journey) · `?debug=1` (diagnostics overlay, toggled with F3; it is hidden and disabled otherwise) ·
-`?qa=camp|shrine|wolves` (visual-QA setups used by the automated screenshots).
+`?play=1` (skip the title screen) · `?bench=1` (deterministic benchmark route; the JSON result is
+exposed as `window.__mistpineBench`) ·
+`?qa=spawn|character|dusk|dawn|camp|shrine|wolves` (fixed-framing visual-QA scenarios used by the
+automated screenshots and the curated QA matrix in `docs/qa/`).
 
 ## Building
 

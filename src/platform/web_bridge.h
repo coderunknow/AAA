@@ -9,5 +9,7 @@ void reportReady();
 void reportError(const char* message);
 // JSON snapshot of the UI/game state for the browser harness (window.__mistpineState).
 void reportState(const char* json);
+// Benchmark result JSON (window.__mistpineBench on web; no-op on native).
+void reportBench(const char* json);
 
 }  // namespace aaa::web
