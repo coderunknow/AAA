@@ -45,9 +45,18 @@ jobs:
           name: shaderc
           path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
       - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
-      - run: cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON
-      - run: cmake --build --preset native-headless
-      - run: ctest --preset native-headless
+      - name: Configure native-headless
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON > /tmp/cfg.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/cfg.log "native-headless configure failed"; exit 1; }
+      - name: Build native-headless
+        run: |
+          cmake --build --preset native-headless > /tmp/build.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/build.log "native-headless build failed"; exit 1; }
+      - name: Test native-headless
+        run: |
+          ctest --preset native-headless > /tmp/ctest.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/ctest.log "native-headless ctest failed"; exit 1; }
 
   native-windowed:
     name: Native windowed build (compile + link)
@@ -79,8 +88,14 @@ jobs:
           name: shaderc
           path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
       - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
-      - run: EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release
-      - run: cmake --build --preset web-release
+      - name: Configure web-release
+        run: |
+          EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release > /tmp/cfg.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/cfg.log "web-release configure failed"; exit 1; }
+      - name: Build web-release
+        run: |
+          cmake --build --preset web-release > /tmp/build.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/build.log "web-release build failed"; exit 1; }
       - name: Collect site
         run: |
           mkdir -p site
