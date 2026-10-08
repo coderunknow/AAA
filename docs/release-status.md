@@ -68,8 +68,10 @@ Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
 | 37790842875 | release | v0.1.0-rc | 59a4088 | failure | Windows `zip` exit 127; Linux packaged smoke missing essl |
 | **37796737715** | ci | branch | **e1d027d** | **success** | all 8 jobs green, incl. browser playtest |
 | **37796725517** | release | v0.1.0-rc | **e1d027d** | **failure** | web ✅ macOS ✅ shader-assets ✅; **Windows** `dumpbin` exit 157; **Linux** AppImage smoke exit 1 (no annotation) |
-| next | ci | branch | (round-4 fix) | pending | revalidation after the round-4 workflow fix |
-| next | release | v0.1.0-rc | (round-4 fix) | pending | confirming dry run |
+| **37801626654** | ci | branch | **bae34a6** | **success** | all 8 jobs green |
+| **37801753643** | release | v0.1.0-rc | **bae34a6** | **failure** | shader-assets ✅ web ✅ macOS ✅ **Linux ✅ (fixed!)**; Windows ❌ at the new PE audit step |
+| next | ci | branch | (round-5 fix) | pending | revalidation after the round-5 parser fix |
+| next | release | v0.1.0-rc | (round-5 fix) | pending | confirming dry run |
 
 **Round-4 fix (commit `HEAD~`-successor), both root-caused:**
 
@@ -126,6 +128,11 @@ Both runs must be green before asking for merge approval.
   an opaque MSYS status (157). `scripts/pe_deps.py` now decides pass/fail from the PE import
   table; `dumpbin` output is still collected as evidence. Flagged here because it is a deviation
   in *tooling* (not in coverage) from the literal wording of PROMPT §9.6.
+  **Note (round 5):** the first version of `pe_deps.py` had the optional-header offsets wrong by
+  4 bytes in both layouts and reported a healthy executable as importing nothing. Fixed; the
+  offsets are now pinned by a format-level assertion (`96 + 16*8 == 224`, `112 + 16*8 == 240`)
+  and the self-test covers PE32 *and* PE32+ plus three negative cases (13/13 check). The audit
+  also now hard-fails if the artifact is not x86-64. Recorded as DESIGN_LOG #18.
 * **GitHub Pages cannot be enabled by me.** `gh api -X POST repos/coderunknow/AAA/pages`
   → **403 "Resource not accessible by integration"** (token lacks admin). Owner action.
   Without Pages, the "web build on a static host" acceptance criterion is **not** satisfied
@@ -165,10 +172,16 @@ Privacy & Security → Open Anyway.
 3. Confirm the round-4 **release dry run** is green for **all 5 build jobs**
    (shader-assets, web, windows, linux, macos); checksums/publish are expected
    to *skip* on an rc tag.
-   Watch specifically for: Windows `Dependency audit (PE import table)` — if it fails, the
-   annotation contains the full import list and the offending DLL; and Linux
-   `Packaged smoke test (AppImage payload)` / `Render verification (xvfb + llvmpipe)`, which
-   have not yet executed on a runner.
+   Watch specifically for Windows `Dependency audit (PE import table)`. If it fails, the
+   annotation carries the toolchain (`gcc -dumpmachine`), the image's machine type and the full
+   import list. Two known possible outcomes:
+   * `machine is i386 (32-bit)` — the runner's MinGW is 32-bit. Real defect against PROMPT 2
+     (Windows x64); fix by pinning an x86_64 toolchain in the release workflow.
+   * a named forbidden DLL (e.g. `libwinpthread-1.dll`) — `-static` did not cover it; add the
+     missing linker flag.
+
+   Linux `Packaged smoke test (AppImage payload)` and `Render verification (xvfb + llvmpipe)`
+   both **passed** in `37801753643` and are no longer open risks.
 4. If either fails: read annotations
    (`gh api repos/coderunknow/AAA/check-runs/<job-id>/annotations`), fix, commit,
    force-push `v0.1.0-rc`, repeat.

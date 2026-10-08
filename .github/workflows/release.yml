@@ -244,7 +244,19 @@ jobs:
           # that shells out to it has been seen to abort with an opaque shell
           # status (157) before printing anything; that must not be allowed to
           # look like a problem with the artifact.
-          python3 scripts/pe_deps.py pkg/Mistpine/mistpine.exe > pe-imports.txt 2>&1 || {
+          # Record the toolchain that produced the image first: if the audit
+          # fails, the annotation then carries the compiler identity along with
+          # the import list, which is usually the whole root cause.
+          {
+            echo "== toolchain =="
+            command -v gcc && gcc -dumpmachine || echo "no gcc on PATH"
+            command -v cl || echo "no cl on PATH"
+            echo "== image =="
+            ls -la pkg/Mistpine/mistpine.exe
+            file pkg/Mistpine/mistpine.exe 2>/dev/null || true
+            echo "== audit =="
+          } > pe-imports.txt 2>&1
+          python3 scripts/pe_deps.py pkg/Mistpine/mistpine.exe >> pe-imports.txt 2>&1 || {
             cat pe-imports.txt
             "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" pe-imports.txt "Windows dependency audit failed"
             exit 1

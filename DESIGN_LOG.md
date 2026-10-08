@@ -495,3 +495,56 @@ code and annotates the render log on failure, and `render.log` is uploaded with 
 **Evidence status.** Implemented and committed; the parser is tested locally. The Windows PE
 audit and the AppImage extraction have **not yet been executed on a runner** — the confirming
 dry run is queued. Nothing here is claimed as CI-verified until that run reports.
+
+### #18 — 2026-10-08 — CONTRADICTION + DONE: the Windows dependency audit in #17 was itself buggy; fixed and re-verified
+
+**CONTRADICTION (with #17).** #17 concluded that `dumpbin` was to blame and replaced it with
+`scripts/pe_deps.py`. The replacement then failed on the runner with
+
+```
+pe_deps: pkg/Mistpine/mistpine.exe imports no DLLs at all (suspicious)
+```
+
+That result was wrong, and the cause was mine, not the runner's: **the optional-header offsets
+in `pe_deps.py` were four bytes late in both layouts.** `NumberOfRvaAndSizes` sits at optiona
+-header offset **92** for PE32 and **108** for PE32+ (the data directories follow immediately,
+so the standard optional-header sizes are exactly `96 + 16*8 = 224` and `112 + 16*8 = 240`). I
+had used 96 and 112, which are the *first data directory entry*, so `NumberOfRvaAndSizes` read
+as the export-table RVA — normally 0 — and every directory was skipped. A healthy executable
+therefore looked like it imported nothing.
+
+Two lessons that are now enforced in the code rather than remembered:
+
+1. **A self-consistent self-test cannot catch a shared constant being wrong.** The old
+   `--self-test` built its PE images with the same wrong table the parser read, so it passed
+   while parsing real images incorrectly. The offsets are now pinned by an import-time
+   assertion (`nrva + 4 + 16*8 == optional header size`, 224 / 240), which is a property of the
+   file format and not of my builder.
+2. **"No imports" is never a normal outcome for an executable.** The parser now raises on a
+   zero or out-of-range `NumberOfRvaAndSizes`, on directories that overrun the optional header,
+   and on a section table that runs off the end of the file — instead of returning an empty
+   list that a caller would read as "clean".
+
+**DONE.**
+
+* `scripts/pe_deps.py` rewritten: correct offsets, the invariant assertion above, machine-type
+  reporting, and a **hard check that the artifact is x86-64** — PROMPT 2 requires a Windows
+  x64 artifact, and shipping a 32-bit one silently would be worse than failing.
+* `--self-test` now covers **both PE32 and PE32+** and three negative cases: `nrva = 0`, an
+  optional header too small to hold the directories, and a non-PE (ELF) input.
+  **13/13 checks pass.** End-to-end behaviour confirmed against built images: a
+  `KERNEL32/msvcrt/USER32/GDI32/d3d11/dxgi` image passes; the same image with `SDL3.dll`
+  fails; a PE32 (i386) image fails on the machine check.
+* The audit step now writes the toolchain (`gcc -dumpmachine`, presence of `cl`) into the
+  annotated log before the audit runs, so any failure arrives with the compiler identity
+  attached.
+
+**Re-run results (round 4) while this was being fixed.** CI `37801626654` on `bae34a6`:
+**all 8 jobs green.** Release dry run `37801753643`: **shader-assets, web, macOS arm64 and
+Linux all success** — the AppImage log-path fix works, and the Linux llvmpipe render
+verification ran for the first time and produced its screenshot. Windows failed only at the
+audit step described above. Every other job in the pipeline is now confirmed green.
+
+**Evidence status.** The parser fix is tested locally (13/13). It has **not** yet run against a
+real Windows executable — the confirming dry run is queued. The claim that the Windows artifact
+is x86-64 is *asserted by the new check*, not yet observed.
