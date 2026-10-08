@@ -82,6 +82,20 @@ const measureFps = async (ms) => page.evaluate(ms => new Promise(res => {
   const f = () => { n++; if (performance.now() - s < ms) requestAnimationFrame(f); else res(n * 1000 / (performance.now() - s)); };
   requestAnimationFrame(f);
 }), ms);
+// The game runs at a handful of frames per second under software rendering, so a UI
+// transition can take several seconds of wall clock. Wait for the state snapshot to
+// report the expected menu instead of sleeping for a fixed time — the click is latched
+// in C++ and consumed on the next frame, so this is a wait, not a poll race.
+const waitForMenu = async (menu, what) => {
+  try {
+    await page.waitForFunction(
+      (m) => !!(window.__mistpineState && window.__mistpineState.menu === m),
+      { timeout: 90000, polling: 250 }, menu);
+  } catch (e) {
+    const state = await page.evaluate(() => window.__mistpineState || null);
+    throw new Error(`timed out waiting for the ${what} (menu '${menu}'); state: ${JSON.stringify(state)}`);
+  }
+};
 
 let ok = false;
 try {
@@ -100,11 +114,11 @@ try {
   await sleep(2500);  // let the overlay fade and streaming settle
   await shot('00-title');
   summary.titleMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
-  await page.click('#canvas').catch(() => {});
+  await page.click('#canvas').catch((e) => { log.push(`${stamp()} [qa] canvas click failed: ${e.message}`); });
+  await waitForMenu('playing', 'title click to start the journey');
   await sleep(1500);  // menu veil fades, HUD fades in
   if (script === 'default') {
     summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
-    if (summary.playingMenu !== 'playing') throw new Error('expected playing after the title click, got: ' + summary.playingMenu);
     await shot('01-spawn');
     summary.rafFpsIdle = await measureFps(3000);
     await look(-260, 0);
@@ -124,6 +138,7 @@ try {
     // Save round trip through real browser localStorage: play, pause (saves), reload, continue.
     await hold(['KeyW'], 3000);
     await press('Escape');
+    await waitForMenu('pause', 'pause menu after Escape');
     await sleep(2500);
     await shot('01-paused');
     summary.pausedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
@@ -142,9 +157,9 @@ try {
     if (!titleState || titleState.menu !== 'title' || !titleState.hasSave)
       throw new Error('title state does not offer Continue: ' + JSON.stringify(summary.titleState));
     await page.click('#canvas');
+    await waitForMenu('playing', 'Continue to resume the journey');
     await sleep(2500);
     summary.resumedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
-    if (summary.resumedMenu !== 'playing') throw new Error('expected playing after continue, got: ' + summary.resumedMenu);
     await shot('03-resumed');
   } else if (script === 'still') {
     await sleep(1500);
@@ -155,10 +170,10 @@ try {
     // of the ?qa= scenario. The framing is pinned by the game (camera override), so the
     // capture is reproducible regardless of frame rate.
     await sleep(1200);
-    await page.click('#canvas').catch(() => {});
-    await sleep(2500);  // let the veil fade, the world settle and streaming catch up
+    await page.click('#canvas').catch((e) => { log.push(`${stamp()} [qa] canvas click failed: ${e.message}`); });
+    await waitForMenu('playing', 'title click to start the journey');
     summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
-    if (summary.playingMenu !== 'playing') throw new Error('expected playing after the title click, got: ' + summary.playingMenu);
+    await sleep(2500);  // let the veil fade, the world settle and streaming catch up
     // Let deferred streaming settle a little longer at low frame rates.
     await sleep(2500);
     await shot('01-scene');
