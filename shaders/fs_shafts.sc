@@ -18,7 +18,7 @@ void main() {
   vec2 delta = toSun / max(u_sunScreen.w, 1.0);
   float decay = 0.965;
   float w = 1.0;
-  vec3 acc = vec3(0.0);
+  vec3 acc = vec3_splat(0.0);
   float weightSum = 0.0;
   for (int i = 0; i < 64; ++i) {
     if (float(i) >= u_sunScreen.w) break;
@@ -27,7 +27,7 @@ void main() {
     weightSum += w;
     w *= decay;
   }
-  vec3 shafts = weightSum > 0.0 ? acc / weightSum : vec3(0.0);
+  vec3 shafts = weightSum > 0.0 ? acc / weightSum : vec3_splat(0.0);
   // Fade the whole effect with distance from the sun so the sky near the sun
   // does not blow out, and kill it entirely when the sun is off-screen/behind.
   float falloff = exp(-dist * 1.35);

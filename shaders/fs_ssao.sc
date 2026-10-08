@@ -38,14 +38,20 @@ void main() {
   vec3 up = abs(n.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
   vec3 tangent = normalize(cross(up, n));
   vec3 bitangent = cross(n, tangent);
-  mat3 tbn = mat3(tangent, bitangent, n);
   float angle = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) * 6.2831853;
   float ca = cos(angle), sa = sin(angle);
-  mat3 rot = mat3(ca, -sa, 0.0, sa, ca, 0.0, 0.0, 0.0, 1.0);
 
   float occlusion = 0.0;
   for (int i = 0; i < 16; ++i) {
-    vec3 samplePos = pos + tbn * (rot * u_kernel[i].xyz) * u_ssaoParams.x;
+    // Rotate the kernel sample inside the tangent plane, then build the view-space
+    // offset from the tangent basis directly. This is deliberately written without a
+    // mat3 multiply: HLSL's `*` is component-wise (matrix-vector needs mul()), and
+    // GLSL and HLSL disagree on the majorness of a mat3 constructor, so the matrix
+    // form does not cross-compile safely to SM 5.0.
+    vec3 k = u_kernel[i].xyz;
+    float krx = ca * k.x + sa * k.y;
+    float kry = -sa * k.x + ca * k.y;
+    vec3 samplePos = pos + (tangent * krx + bitangent * kry + n * k.z) * u_ssaoParams.x;
     // Project the sample to screen space and read the actual scene depth there.
     vec4 pc = mul(u_ssaoProj, vec4(samplePos, 1.0));
     pc /= pc.w;
@@ -57,5 +63,5 @@ void main() {
     occlusion += (actualZ < samplePos.z - u_ssaoParams.y ? 1.0 : 0.0) * u_kernel[i].w * rangeCheck;
   }
   float ao = clamp(1.0 - occlusion * u_ssaoParams.z, 0.0, 1.0);
-  gl_FragColor = vec4(vec3(ao), 1.0);
+  gl_FragColor = vec4(vec3_splat(ao), 1.0);
 }
