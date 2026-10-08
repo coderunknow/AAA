@@ -52,6 +52,11 @@ if(AAA_BUILD_GAME OR AAA_BUILD_TOOLS)
   include(Dependencies)
 endif()
 
+# The project VERSION (0.1.0) is the single source of truth for the app version,
+# exposed to logs, --version and the title screen (PROMPT §8.9). Applied after the
+# third-party includes above so it only reaches first-party targets.
+add_compile_definitions(AAA_VERSION_STRING="${PROJECT_VERSION}")
+
 if(AAA_BUILD_GAME)
   include(Shaders)
   add_subdirectory(src/render)

@@ -53,7 +53,12 @@ void CharacterAnimator::update(float dt, const PlayerController& player) {
   const float hipH = 0.94f - 0.34f * crouchWeight_ + bob - 0.12f * player.landingImpact() + 0.004f * breathe * (1 - w);
   const Vec3 pos = player.position();
 
+  prevPos_ = pos_;
+  prevYaw_ = yaw_;
+  pos_ = pos;
+  yaw_ = player.facingYaw();
   const Mat4 root = Mat4::translation(pos) * Mat4::rotationY(player.facingYaw());
+  root_ = root;
   const Mat4 pelvis = root * Mat4::translation({0, hipH, 0}) * Mat4::rotationZ(leanSide_ * 0.5f) *
                       Mat4::rotationY(0.12f * w * s);
   const float torsoLean = leanForward_ + 0.32f * crouchWeight_ + 0.08f * airWeight_;

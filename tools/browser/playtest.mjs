@@ -17,8 +17,11 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) =>
 }, []));
 const dir = path.resolve(args.dir ?? '../../build/web-dev/src/app');
 const out = path.resolve(args.out ?? '../../qa/latest');
-const query = args.query ?? '';
+// The `default` script toggles the diagnostics overlay with F3; the overlay only exists
+// with ?debug=1, so make sure the flag is present for that script (README: URL options).
+let query = args.query ?? '';
 const script = args.script ?? 'default';
+if (script === 'default' && !/[?&]debug=1(&|$)/.test(query)) query = (query ? query + '&' : '') + 'debug=1';
 const width = Number(args.width ?? 1280), height = Number(args.height ?? 720);
 const readyTimeout = Number(args.timeout ?? 600) * 1000;
 fs.mkdirSync(out, { recursive: true });

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 
 #include "core/log.h"
 #include "game/save_game.h"
@@ -42,6 +43,14 @@ QualityPreset parseQuality(const char* v) {
 }
 }  // namespace
 
+const char* appVersion() {
+#ifdef AAA_VERSION_STRING
+  return AAA_VERSION_STRING;
+#else
+  return "0.1.0";
+#endif
+}
+
 AppOptions parseOptions(int argc, char** argv) {
   AppOptions o;
   for (int i = 1; i < argc; ++i) {
@@ -55,6 +64,8 @@ AppOptions parseOptions(int argc, char** argv) {
     else if (std::strcmp(a, "--debug") == 0) o.debugOverlay = true;
     else if (std::strcmp(a, "--new") == 0) o.newGame = true;
     else if (std::strcmp(a, "--qa") == 0) o.qaScenario = next();
+    else if (std::strcmp(a, "--renderer") == 0) o.renderer = next();
+    else if (std::strcmp(a, "--version") == 0) o.showVersion = true;
   }
 #if defined(__EMSCRIPTEN__)
   char* q = aaa_query_string();
@@ -73,28 +84,70 @@ AppOptions parseOptions(int argc, char** argv) {
   if (!param("frames").empty()) o.maxFrames = std::atoi(param("frames").c_str());
   if (param("new") == "1") o.newGame = true;
   o.qaScenario = param("qa");
-  o.assetRoot = "/assets";
-#else
-  if (o.assetRoot.empty()) {
-#ifdef AAA_ASSET_DIR
-    o.assetRoot = AAA_ASSET_DIR;
-#else
-    o.assetRoot = "assets";
+  o.assetRoot = "/assets";  // Emscripten preloaded data bundle mount point
 #endif
-  }
-#endif
+  // Native: an empty assetRoot means "discover next to the executable" (App::init),
+  // so packaged builds never depend on the build directory or the current CWD.
   return o;
+}
+
+std::string App::resolveAssetRoot() const {
+  if (!opts_.assetRoot.empty()) return opts_.assetRoot;  // explicit --assets override
+#if defined(__EMSCRIPTEN__)
+  return "/assets";
+#else
+  // Discover assets relative to the executable, never the current working
+  // directory (PROMPT §8.4). Candidate layouts:
+  //   <exe>/assets                 portable zip / tar / AppImage payload
+  //   <exe>/../assets              build tree: build/<preset>/src/app/mistpine
+  //   <exe>/../../assets           build tree from a deeper output dir
+  //   <exe>/../Resources/assets    macOS bundle: Mistpine.app/Contents/MacOS/mistpine
+  //   <exe>/../../Resources/assets macOS bundle from a nested output dir
+  std::string base;
+  if (const char* p = SDL_GetBasePath()) base = p;  // cached pointer, not owned
+  if (base.empty()) {
+    AAA_LOG_WARN("SDL_GetBasePath failed (%s); falling back to CWD-relative 'assets'", SDL_GetError());
+    return "assets";
+  }
+  auto hasShaders = [](const std::string& dir) {
+    // The compiled shader tree is the one asset every build must contain.
+    std::string probe = dir + "/shaders";
+    return std::filesystem::is_directory(probe);
+  };
+  std::string exeDir = base;
+  if (auto pos = exeDir.find_last_of("/\\"); pos != std::string::npos) exeDir = exeDir.substr(0, pos + 1);
+  std::string up1 = exeDir, up2 = exeDir;
+  if (auto pos = up1.find_last_of("/\\", up1.size() - 2); pos != std::string::npos) up1 = up1.substr(0, pos + 1);
+  if (auto pos = up2.find_last_of("/\\", up2.size() - 2); pos != std::string::npos) {
+    up2 = up2.substr(0, pos + 1);
+    if (auto pos2 = up2.find_last_of("/\\", up2.size() - 2); pos2 != std::string::npos) up2 = up2.substr(0, pos2 + 1);
+  }
+  const std::string candidates[] = {
+      exeDir + "assets/",        up1 + "assets/",        up2 + "assets/",
+      up1 + "Resources/assets/", up2 + "Resources/assets/",
+  };
+  for (const std::string& c : candidates) {
+    if (hasShaders(c)) {
+      AAA_LOG_INFO("assets: %s (discovered next to the executable)", c.c_str());
+      return c;
+    }
+  }
+  AAA_LOG_WARN("no 'assets/shaders' found next to the executable (searched %s); trying '%s' anyway",
+               exeDir.c_str(), (exeDir + "assets/").c_str());
+  return exeDir + "assets/";
+#endif
 }
 
 bool App::init(const AppOptions& opts) {
   opts_ = opts;
   loadStartMs_ = nowMs();
-  AAA_LOG_INFO("Mistpine starting (%s, quality %s, assets '%s')", opts.headless ? "headless" : "windowed",
-               qualityName(opts.quality), opts.assetRoot.c_str());
+  AAA_LOG_INFO("Mistpine %s starting (%s, quality %s)", appVersion(), opts.headless ? "headless" : "windowed",
+               qualityName(opts.quality));
   if (!platform_.init("Mistpine", 1280, 720, opts.headless)) {
     web::reportError("Could not create the game window.");
     return false;
   }
+  const std::string assetRoot = resolveAssetRoot();
   uint32_t w = 1280, h = 720;
   if (!opts.headless) platform_.pixelSize(w, h);
   RendererInit ri;
@@ -104,8 +157,9 @@ bool App::init(const AppOptions& opts) {
   ri.width = w;
   ri.height = h;
   ri.noop = opts.headless;
-  ri.assetRoot = opts.assetRoot;
+  ri.assetRoot = assetRoot;
   ri.quality = opts.quality;
+  ri.requestedRenderer = opts_.renderer;
   if (!renderer_.init(ri)) {
     web::reportError("WebGL 2 is required but could not be initialised. Try an up-to-date Chrome, Edge or Firefox.");
     return false;
@@ -202,7 +256,25 @@ bool App::iterate() {
     web::reportPause(true);
     saveNow("focus lost");
   }
-  game_->update(dt, input);
+  // Fixed-step simulation at 60 Hz with render interpolation (PROMPT §8.6).
+  // The accumulator is clamped so a long hitch never causes a simulation spiral.
+  if (game_->phase() == GamePhase::Paused) {
+    // Menus keep the world alive in real time; the simulation clock does not advance.
+    accumulator_ = 0.0;
+    interpAlpha_ = 0.0f;
+    game_->update(dt, InputFrame{});
+  } else {
+    accumulator_ += dt;
+    if (accumulator_ > 0.25) accumulator_ = 0.25;  // hitch clamp
+    InputFrame simInput = input;
+    while (accumulator_ >= kFixedDt) {
+      game_->update(static_cast<float>(kFixedDt), simInput);
+      accumulator_ -= kFixedDt;
+      // Edge-triggered actions are consumed by the first sub-step of the frame.
+      simInput.crouchToggle = simInput.jump = simInput.interact = simInput.buildFire = simInput.eat = false;
+    }
+    interpAlpha_ = static_cast<float>(accumulator_ / kFixedDt);
+  }
   handleEvents();
   updateAudio();
   updateHud(dt);
@@ -210,7 +282,7 @@ bool App::iterate() {
     autosaveTimer_ += dt;
     if (autosaveTimer_ > 45.0) saveNow("autosave");
   }
-  renderer_.render(*game_, dt);
+  renderer_.render(*game_, dt, interpAlpha_);
   ++frames_;
   // Milestone log (also lets automated browser QA confirm frames are being presented).
   if (frames_ == 1 || frames_ == 10 || frames_ == 100 || frames_ % 1000 == 0)
@@ -229,6 +301,12 @@ void App::saveNow(const char* reason) {
   const bool ok = storage_->save(kSaveKey, serializeSave(game_->makeSave()));
   hasSave_ = hasSave_ || ok;
   AAA_LOG_INFO("save (%s): %s", reason, ok ? "ok" : "FAILED");
+  // If persistence is unavailable (quota, privacy mode, unwritable pref path), tell
+  // the player once and keep running — never falsely claim the save worked (PROMPT §8.7).
+  if (!ok && !saveFailedNotified_) {
+    saveFailedNotified_ = true;
+    web::notify("Your progress could not be saved (storage unavailable or full). The game keeps running, but progress will be lost when you leave.");
+  }
 }
 
 void App::resumeFromUi() {

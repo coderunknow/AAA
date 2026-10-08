@@ -15,14 +15,18 @@ struct AppOptions {
   bool headless = false;  // Noop renderer, no window (CI / sandbox smoke test)
   int maxFrames = 0;      // quit after N rendered frames (0 = run forever)
   QualityPreset quality = QualityPreset::High;
-  std::string assetRoot;
+  std::string assetRoot;      // --assets <path> override (empty = discover next to the executable)
   float startHours = -1.0f;  // override time of day (screenshots / QA)
   bool debugOverlay = false;  // ?debug=1: shows the overlay and enables the F3 toggle
   bool newGame = false;       // ?new=1: discard the saved journey
   std::string qaScenario;     // ?qa=camp|shrine|wolves (visual QA only)
+  std::string renderer;       // --renderer d3d11|vulkan|opengl|metal|noop ("" = platform chain)
+  bool showVersion = false;   // --version: print the version and exit
 };
 
 AppOptions parseOptions(int argc, char** argv);
+// Single source of truth for the version string (CMake project VERSION).
+const char* appVersion();
 
 class App {
  public:
@@ -43,6 +47,7 @@ class App {
   void updateAudio();
   void updateHud(float dt);
   void saveNow(const char* reason);
+  std::string resolveAssetRoot() const;
 
   AppOptions opts_;
   Platform platform_;
@@ -61,6 +66,11 @@ class App {
   double autosaveTimer_ = 0.0;
   float hudTimer_ = 0.0f;
   std::string lastPrompt_;
+  // Fixed-step simulation at 60 Hz with render interpolation (PROMPT §8.6).
+  static constexpr double kFixedDt = 1.0 / 60.0;
+  double accumulator_ = 0.0;
+  float interpAlpha_ = 0.0f;
+  bool saveFailedNotified_ = false;  // tell the player once when persistence fails
 };
 
 }  // namespace aaa

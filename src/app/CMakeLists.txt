@@ -21,8 +21,8 @@ if(EMSCRIPTEN)
     target_link_options(mistpine PRIVATE "--profiling-funcs")
   endif()
 else()
-  # Native: copy-free asset lookup — the binary loads <build>/assets via SDL_GetBasePath()/../assets.
-  target_compile_definitions(mistpine PRIVATE AAA_ASSET_DIR="${CMAKE_BINARY_DIR}/assets")
+  # Native: no compile-time asset path. The binary discovers assets relative to the
+  # executable at runtime (App::resolveAssetRoot), so packaged builds work from any CWD.
 endif()
 
 # Headless smoke runs (bgfx Noop renderer): full load -> play loop, including the QA scenarios.

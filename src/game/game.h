@@ -60,6 +60,8 @@ class Game {
   const PlayerController& player() const { return player_; }
   const ThirdPersonCamera& camera() const { return camera_; }
   ThirdPersonCamera& camera() { return camera_; }
+  // Render-interpolated camera view between the last two simulation states.
+  CameraView cameraView(float alpha) const { return camera_.view(alpha); }
   const CharacterAnimator& animator() const { return animator_; }
   CharacterAnimator& animator() { return animator_; }
   TimeOfDay& timeOfDay() { return time_; }

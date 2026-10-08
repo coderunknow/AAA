@@ -43,6 +43,7 @@ struct RendererInit {
   bool noop = false;              // headless (no GPU)
   std::string assetRoot = "assets";
   QualityPreset quality = QualityPreset::High;
+  std::string requestedRenderer;  // "" = platform preference chain; else d3d11|vulkan|opengl|metal|noop
 };
 
 struct RendererInfo {
@@ -67,7 +68,9 @@ class Renderer {
   const char* loadStage() const;
 
   void resize(uint32_t width, uint32_t height);
-  void render(const Game& game, float realDt);
+  // `interpAlpha` in [0,1): render-time interpolation between the last two
+  // simulation states (fixed-step simulation, PROMPT §8.6).
+  void render(const Game& game, float realDt, float interpAlpha = 0.0f);
   void setQuality(QualityPreset q);
   QualityPreset quality() const { return quality_; }
   void setDebugOverlay(bool on) { debug_ = on; }

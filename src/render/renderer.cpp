@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include "core/log.h"
 #include "game/game.h"
@@ -54,27 +55,90 @@ RenderSettings RenderSettings::preset(QualityPreset q) {
 Renderer::Renderer() = default;
 Renderer::~Renderer() { shutdown(); }
 
+namespace {
+// Maps a --renderer name to a bgfx backend. Returns Count for "" (auto).
+bgfx::RendererType::Enum parseRendererName(const std::string& s) {
+  if (s.empty() || s == "auto") return bgfx::RendererType::Count;
+  if (s == "noop") return bgfx::RendererType::Noop;
+  if (s == "d3d11" || s == "direct3d11") return bgfx::RendererType::Direct3D11;
+  if (s == "d3d12" || s == "direct3d12") return bgfx::RendererType::Direct3D12;
+  if (s == "metal") return bgfx::RendererType::Metal;
+  if (s == "vulkan") return bgfx::RendererType::Vulkan;
+  if (s == "opengl" || s == "gl") return bgfx::RendererType::OpenGL;
+  if (s == "opengles" || s == "gles" || s == "webgl") return bgfx::RendererType::OpenGLES;
+  return bgfx::RendererType::Count;
+}
+}  // namespace
+
 bool Renderer::init(const RendererInit& in) {
   init_ = in;
   quality_ = in.quality;
   settings_ = RenderSettings::preset(quality_);
-  bgfx::Init bi;
-  bi.type = in.noop ? bgfx::RendererType::Noop : bgfx::RendererType::Count;
+  // Deterministic single-threaded rendering: calling renderFrame() before init()
+  // latches bgfx onto the API thread (no internal render thread), so frame
+  // submission order is fully deterministic. Required by the release (PROMPT §8.3).
+  bgfx::renderFrame();
+  // Backend selection (PROMPT §8.2): an explicit --renderer wins; otherwise the
+  // platform preference chain is tried in order until bgfx::init succeeds.
+  std::vector<bgfx::RendererType::Enum> chain;
+  const bgfx::RendererType::Enum requested = parseRendererName(in.requestedRenderer);
+  if (in.noop) {
+    chain.push_back(bgfx::RendererType::Noop);
+  } else if (requested != bgfx::RendererType::Count) {
+    chain.push_back(requested);
 #if defined(__EMSCRIPTEN__)
-  if (!in.noop) bi.type = bgfx::RendererType::OpenGLES;  // WebGL2 (verified backend at runtime below)
+    chain.push_back(bgfx::RendererType::OpenGLES);  // WebGL2 fallback
+#else
+#if defined(_WIN32)
+    chain.push_back(bgfx::RendererType::Vulkan);
+    chain.push_back(bgfx::RendererType::OpenGL);
+#elif defined(__APPLE__)
+    chain.push_back(bgfx::RendererType::Metal);
+#else
+    chain.push_back(bgfx::RendererType::OpenGL);
+    chain.push_back(bgfx::RendererType::Vulkan);
 #endif
-  // This bgfx revision describes the main window as a SwapChain (nwh == NULL -> headless).
-  bi.swapChain.nwh = in.nativeWindow;
-  bi.swapChain.ndt = in.nativeDisplay;
-  bi.swapChain.width = in.width;
-  bi.swapChain.height = in.height;
-  bi.reset = settings_.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
-  bi.limits.maxTransientVbSize = 8u << 20;
-  bi.limits.maxTransientIbSize = 2u << 20;
-  if (!bgfx::init(bi)) {
-    AAA_LOG_ERROR("bgfx::init failed");
+#endif
+  } else {
+#if defined(__EMSCRIPTEN__)
+    chain.push_back(bgfx::RendererType::OpenGLES);  // WebGL2 (the web backend; never WebGPU)
+#elif defined(_WIN32)
+    chain.push_back(bgfx::RendererType::Direct3D11);
+    chain.push_back(bgfx::RendererType::Vulkan);
+    chain.push_back(bgfx::RendererType::OpenGL);
+#elif defined(__APPLE__)
+    chain.push_back(bgfx::RendererType::Metal);
+#else
+    chain.push_back(bgfx::RendererType::OpenGL);
+    chain.push_back(bgfx::RendererType::Vulkan);
+#endif
+  }
+  bgfx::RendererType::Enum selected = bgfx::RendererType::Count;
+  for (size_t i = 0; i < chain.size(); ++i) {
+    bgfx::Init bi;
+    bi.type = chain[i];
+    // This bgfx revision describes the main window as a SwapChain (nwh == NULL -> headless).
+    bi.swapChain.nwh = in.nativeWindow;
+    bi.swapChain.ndt = in.nativeDisplay;
+    bi.swapChain.width = in.width;
+    bi.swapChain.height = in.height;
+    bi.reset = settings_.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
+    bi.limits.maxTransientVbSize = 8u << 20;
+    bi.limits.maxTransientIbSize = 2u << 20;
+    if (bgfx::init(bi)) {
+      selected = chain[i];
+      break;
+    }
+    AAA_LOG_WARN("bgfx::init failed for backend %s%s", bgfx::getRendererName(chain[i]),
+                 i + 1 < chain.size() ? ", trying the next candidate" : "");
+    bgfx::shutdown();
+  }
+  if (selected == bgfx::RendererType::Count) {
+    AAA_LOG_ERROR("bgfx::init failed for every candidate backend");
     return false;
   }
+  AAA_LOG_INFO("renderer backend: %s%s", bgfx::getRendererName(selected),
+               in.requestedRenderer.empty() ? " (platform default)" : " (requested)");
   initialised_ = true;
   width_ = in.width;
   height_ = in.height;
@@ -94,6 +158,24 @@ bool Renderer::init(const RendererInit& in) {
   if (!info_.shadowSampler) settings_.shadows = false;
 
   shaders_ = std::make_unique<ShaderLibrary>(in.assetRoot);
+  // Fail clearly when the compiled shader profile for the active backend is missing
+  // (PROMPT §8.1: no silent fallback to another profile).
+  if (!shaders_->profileDir()) {
+    AAA_LOG_ERROR("no compiled shader profile for backend %s — this backend is not supported by the build",
+                  info_.backend);
+    shaders_.reset();
+    bgfx::shutdown();
+    initialised_ = false;
+    return false;
+  }
+  if (!bgfx::isValid(shaders_->program("vs_fullscreen", "fs_sky"))) {
+    AAA_LOG_ERROR("shader binaries for profile '%s' not found under '%s' — rebuild the shader assets",
+                  shaders_->profileDir(), in.assetRoot.c_str());
+    shaders_.reset();
+    bgfx::shutdown();
+    initialised_ = false;
+    return false;
+  }
   terrain_ = std::make_unique<TerrainRenderer>();
   props_ = std::make_unique<PropRenderer>();
   character_ = std::make_unique<CharacterRenderer>();
@@ -302,7 +384,7 @@ void Renderer::setFrameUniforms(const Game& game, const float* shadowMtx) {
   bgfx::setUniform(u_.fireColor, fcol);
 }
 
-void Renderer::render(const Game& game, float realDt) {
+void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   if (!initialised_) return;
   ++frame_;
   time_ = static_cast<float>(game.simTime());
@@ -329,8 +411,8 @@ void Renderer::render(const Game& game, float realDt) {
   const float valleyFloor = lay.valleyFloorAt(game.world().fields().valleyParam(pp.x, pp.z));
   atm_ = evaluateAtmosphere({tod.sunDirection(), tod.hours(), valleyFloor});
 
-  // --- camera --------------------------------------------------------------------------------
-  const CameraView& cv = game.camera().view();
+  // --- camera (render-interpolated between the last two simulation states) -------------------
+  const CameraView cv = game.cameraView(interpAlpha);
   float view[16], proj[16], viewProj[16];
   bx::mtxLookAt(view, bv(cv.eye), bv(cv.target), {0.0f, 1.0f, 0.0f});
   const float aspect = static_cast<float>(sceneW_) / static_cast<float>(sceneH_);
@@ -340,6 +422,17 @@ void Renderer::render(const Game& game, float realDt) {
   frustum.fromViewProj(viewProj);
   const Vec3 fwd = normalize(cv.target - cv.eye);
   const Vec3 fwdFlat = normalize(Vec3{fwd.x, 0.0f, fwd.z} + Vec3{0.0f, 0.0f, 1e-4f});
+
+  // --- render interpolation: rebase characters onto the interpolated root --------------------
+  // The simulation runs at a fixed 60 Hz; characters are rebased from their current
+  // simulation root onto the interpolated root so they move smoothly at any frame rate.
+  const Mat4 playerRebase = game.animator().renderRoot(interpAlpha) * game.animator().root().inverseRigid();
+  auto wolfRebase = [&](const Wolf& w) {
+    const Mat4 cur = Mat4::translation(w.pos) * Mat4::rotationY(w.yaw);
+    const Vec3 p = lerp(w.prevPos, w.pos, interpAlpha);
+    const float yaw = w.prevYaw + wrapAngle(w.yaw - w.prevYaw) * interpAlpha;
+    return Mat4::translation(p) * Mat4::rotationY(yaw) * cur.inverseRigid();
+  };
 
   // --- shadow cascades -----------------------------------------------------------------------
   float shadowMtx[32];
@@ -380,7 +473,7 @@ void Renderer::render(const Game& game, float realDt) {
       if (c == 0) setFrameUniforms(game, shadowMtx);  // first submit of the frame (wind/time used by casters)
       terrain_->submitShadow(vid, center, radius, c == 0 ? 0 : 2, game.world());
       props_->submitShadow(vid, game.world(), center, radius, c == 0 ? 1 : 2, c == 1);
-      character_->submit(vid, game.animator().parts(), true);
+      character_->submit(vid, game.animator().parts(), true, &playerRebase);
       if (game.phase() != GamePhase::LoadingWorld) {
         objects_->submit(vid, game, center, nullptr, true, time_);
         if (c == 0) {
@@ -388,7 +481,8 @@ void Renderer::render(const Game& game, float realDt) {
           for (const Wolf& w : game.wildlife().wolves()) {
             if (length(w.pos - center) > radius) continue;
             buildWolfPose(w, time_, pose);
-            character_->submit(vid, pose.data(), kWolfPartCount, true);
+            const Mat4 rebase = wolfRebase(w);
+            character_->submit(vid, pose.data(), kWolfPartCount, true, &rebase);
           }
         }
       }
@@ -409,14 +503,15 @@ void Renderer::render(const Game& game, float realDt) {
   setSceneShadowMap(u_.sShadow, shadowsOn ? shadowTex_ : bgfx::TextureHandle{bgfx::kInvalidHandle});
   terrain_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.terrainLod, 0);
   props_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.propDistance, settings_.grassDensity);
-  if (game.phase() != GamePhase::LoadingWorld) character_->submit(kViewScene, game.animator().parts(), false);
+  if (game.phase() != GamePhase::LoadingWorld) character_->submit(kViewScene, game.animator().parts(), false, &playerRebase);
   if (game.phase() != GamePhase::LoadingWorld) {
     objects_->submit(kViewScene, game, cv.eye, &frustum, false, time_);
     WolfPose pose;
     for (const Wolf& w : game.wildlife().wolves()) {
       if (lengthSq(w.pos - cv.eye) > 160.0f * 160.0f || !frustum.sphereVisible(w.pos + Vec3{0, 0.5f, 0}, 1.2f)) continue;
       buildWolfPose(w, time_, pose);
-      character_->submit(kViewScene, pose.data(), kWolfPartCount, false);
+      const Mat4 rebase = wolfRebase(w);
+      character_->submit(kViewScene, pose.data(), kWolfPartCount, false, &rebase);
     }
   }
   water_->submit(kViewScene, frustum);  // translucent: after opaque geometry

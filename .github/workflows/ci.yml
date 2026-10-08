@@ -64,7 +64,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libgl-dev libasound2-dev libpulse-dev
+      # SDL3's X11 checks are fatal when these are missing (XTEST/XFIXES/XRENDER are
+      # on by default), so the windowed job needs the full X11 dev set.
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libxfixes-dev libxrender-dev libgl-dev libegl-dev libasound2-dev libpulse-dev
       - uses: actions/download-artifact@v4
         with:
           name: shaderc

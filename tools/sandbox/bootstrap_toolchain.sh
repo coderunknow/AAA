@@ -2,8 +2,8 @@
 # -----------------------------------------------------------------------------
 # Sandbox-only toolchain bootstrap.
 #
-# The CANONICAL build uses the official emsdk (see README.md / tools/setup_emsdk.sh
-# and .github/workflows/build.yml). This script exists for development
+# The CANONICAL build uses the official emsdk (see README.md and
+# .github/workflows/ci.yml). This script exists for development
 # environments where the official emsdk download hosts (storage.googleapis.com)
 # and GitHub release assets are unreachable, but github.com/codeload, PyPI and npm
 # are reachable. It assembles an equivalent Emscripten 4.0.11 toolchain from:

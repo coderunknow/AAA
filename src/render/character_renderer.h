@@ -15,9 +15,12 @@ class CharacterRenderer {
  public:
   ~CharacterRenderer();
   void init(ShaderLibrary& shaders, bgfx::UniformHandle detailSampler, bgfx::TextureHandle detail);
-  void submit(bgfx::ViewId view, const PartPose* parts, int count, bool shadow);
-  void submit(bgfx::ViewId view, const std::array<PartPose, kBodyPartCount>& parts, bool shadow) {
-    submit(view, parts.data(), kBodyPartCount, shadow);
+  // `rebase` (optional): premultiplied transform that moves the pose from its
+  // simulation root onto the render-interpolated root (fixed-step interpolation).
+  void submit(bgfx::ViewId view, const PartPose* parts, int count, bool shadow, const Mat4* rebase = nullptr);
+  void submit(bgfx::ViewId view, const std::array<PartPose, kBodyPartCount>& parts, bool shadow,
+              const Mat4* rebase = nullptr) {
+    submit(view, parts.data(), kBodyPartCount, shadow, rebase);
   }
 
  private:

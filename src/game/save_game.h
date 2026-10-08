@@ -21,7 +21,7 @@ struct SavedFire {
 };
 
 struct SaveData {
-  static constexpr int kCurrentVersion = 3;
+  static constexpr int kCurrentVersion = 4;
   static constexpr size_t kMaxPicked = 2048;
   static constexpr size_t kMaxFires = 8;
   uint32_t worldSeed = 0;
@@ -32,6 +32,9 @@ struct SaveData {
   int quality = 2;            // QualityPreset
   float mouseSensitivity = 1.0f;
   bool invertY = false;
+  // v4: desktop settings (native in-engine UI). v3 saves migrate with defaults.
+  float masterVolume = 1.0f;
+  bool fullscreen = false;
   // v3: survival state.
   int day = 1;
   Vitals vitals;

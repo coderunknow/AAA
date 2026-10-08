@@ -21,6 +21,8 @@ struct Wolf {
   Vec3 pos;
   Vec3 vel;
   float yaw = 0.0f;
+  Vec3 prevPos;       // position at the previous simulation step (render interpolation)
+  float prevYaw = 0.0f;
   WolfState state = WolfState::Roam;
   float stateTime = 0.0f;
   float stalkAngle = 0.0f;   // angle around the player while circling

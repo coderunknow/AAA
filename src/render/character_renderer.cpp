@@ -45,14 +45,15 @@ void CharacterRenderer::init(ShaderLibrary& shaders, bgfx::UniformHandle detailS
   detail_ = detail;
 }
 
-void CharacterRenderer::submit(bgfx::ViewId view, const PartPose* parts, int count, bool shadow) {
+void CharacterRenderer::submit(bgfx::ViewId view, const PartPose* parts, int count, bool shadow, const Mat4* rebase) {
   const bgfx::ProgramHandle prog = shadow ? shadowProgram_ : program_;
   if (!bgfx::isValid(prog)) return;
   for (int pi = 0; pi < count; ++pi) {
     const PartPose& p = parts[pi];
     const GpuMesh& mesh = meshes_[static_cast<int>(p.shape)];
     if (!mesh.valid()) continue;
-    bgfx::setTransform(p.transform.m);
+    const Mat4 t = rebase ? (*rebase * p.transform) : p.transform;
+    bgfx::setTransform(t.m);
     bgfx::setVertexBuffer(0, mesh.vbh);
     bgfx::setIndexBuffer(mesh.ibh);
     if (shadow) {

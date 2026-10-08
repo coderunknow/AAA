@@ -45,6 +45,7 @@ float ThirdPersonCamera::obstructionDistance(Vec3 pivot, Vec3 dir, float maxDist
 }
 
 void ThirdPersonCamera::update(float dt, const InputFrame& input, const PlayerController& player, const World& world) {
+  prevView_ = view_;  // interpolation source for render-time smoothing
   const CameraTuning& T = tuning_;
   // Look input.
   yaw_ += input.lookDelta.x * T.mouseSensitivity + input.lookRate.x * T.stickSensitivity * dt;
