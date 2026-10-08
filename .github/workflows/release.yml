@@ -75,8 +75,10 @@ jobs:
           version: ${{ env.EMSDK_VERSION }}
       - name: Host tools (shaderc)
         run: |
-          cmake --preset tools
-          cmake --build --preset tools --target shaderc
+          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
       - name: Configure web-release
         run: |
           EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release > /tmp/cfg.log 2>&1 ||
@@ -164,8 +166,10 @@ jobs:
         run: |
           # Static CRT: the tool must run anywhere on the runner without hunting for
           # vcruntime/msvcp DLLs (a missing/mismatched CRT DLL crashes it at startup).
-          cmake --preset tools -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-          cmake --build --preset tools --target shaderc
+          cmake --preset tools -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
       - name: Configure native-release
         run: |
           cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
@@ -245,8 +249,10 @@ jobs:
             xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils
       - name: Host tools (shaderc)
         run: |
-          cmake --preset tools
-          cmake --build --preset tools --target shaderc
+          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
       - name: Configure native-release
         run: |
           cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
@@ -354,8 +360,10 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Host tools (shaderc — also emits the metal shader profile)
         run: |
-          cmake --preset tools
-          cmake --build --preset tools --target shaderc
+          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
       - name: Configure native-release
         run: |
           cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
