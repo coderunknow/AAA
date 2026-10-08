@@ -75,12 +75,16 @@ elseif(EMSCRIPTEN)
 elseif(AAA_RENDERER_NOOP)
   set(AAA_SHADER_PROFILES "essl:300_es:linux")
 elseif(WIN32)
-  set(AAA_SHADER_PROFILES "dx11:s_5_0:windows" "spirv:spirv:linux" "glsl:440:linux")
+  set(AAA_SHADER_PROFILES "dx11:s_5_0:windows" "spirv:spirv:linux" "glsl:440:linux" "essl:300_es:linux")
 elseif(APPLE)
-  set(AAA_SHADER_PROFILES "metal:metal:osx")
+  set(AAA_SHADER_PROFILES "metal:metal:osx" "essl:300_es:linux")
 else()
-  set(AAA_SHADER_PROFILES "glsl:440:linux" "spirv:spirv:linux")
+  set(AAA_SHADER_PROFILES "glsl:440:linux" "spirv:spirv:linux" "essl:300_es:linux")
 endif()
+# NB: every native set also carries essl. The packaged-binary smoke test runs with
+# --headless, and the Noop backend's profile dir is essl, so a package without it
+# fails validation ("shader binary missing") even though the shipped artifacts
+# themselves are correct. It is a few hundred kB of data a desktop player never loads.
 
 # aaa_add_shaders(<target-name> SHADERS vs_a.sc fs_a.sc ...)
 function(aaa_add_shaders target)

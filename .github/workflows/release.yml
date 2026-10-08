@@ -228,8 +228,13 @@ jobs:
           mkdir -p pkg/Mistpine
           cp build/native-release/src/app/mistpine.exe pkg/Mistpine/
           cp -r build/native-release/assets pkg/Mistpine/assets
-          (cd pkg && zip -r "../mistpine-v${VERSION}-windows-x64.zip" Mistpine)
+          # No `zip` on the windows-2022 bash image (exit 127); use Python, which is
+          # present on every runner. make_archive appends the .zip extension itself.
+          python3 -c "import shutil; shutil.make_archive('mistpine-v${VERSION}-windows-x64', 'zip', root_dir='pkg')"
           ls -la "mistpine-v${VERSION}-windows-x64.zip"
+          python3 -c "import zipfile,sys; n=zipfile.ZipFile('mistpine-v${VERSION}-windows-x64.zip').namelist(); \
+            print(len(n), 'entries'); \
+            sys.exit(0 if any(x.endswith('Mistpine/mistpine.exe') for x in n) else 1)"
       - name: Dependency audit (dumpbin)
         run: |
           DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe | tail -1)
