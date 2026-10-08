@@ -381,3 +381,69 @@ Deferrals (M4 deferral rule — lowest-impact items, with reasons):
 * Explicit ToD *grading preset* UI (beyond the automatic five presets now in code): the
   grade is automatic and continuous; no manual preset picker was added (gameplay/UI scope
   freeze, §3.3).
+
+### #16 — 2026-10-08 — DONE: M4 verification, QA matrix, CI and release dry run
+
+Verification and release-gate work following entry #15. Sandbox: 2 cores, no GPU, no display;
+native-headless (bgfx Noop) and web-release builds via the bootstrapped Emscripten 4.0.11.
+
+**Verified locally (evidence)**
+
+* Native headless: builds clean under the project's `-Werror` flags; **63/63 unit tests pass**;
+  CTest **4/4** (unit + day + night-campfire + wolves smoke runs). This includes the new
+  contact-shadow renderer.
+* Shaders: `fs_tonemap` (with `u_todGrade`), `vs_contact_shadow` and `fs_contact_shadow` compile
+  with the host shaderc for **essl 300_es, glsl 440, spirv and metal** (4 profiles x 3 shaders,
+  12/12). The dx11 (SM 5.0) profile is compiled by the Windows CI job only — a Linux shaderc
+  cannot emit it, and I did not run a Windows shaderc locally.
+* Web release build: `index.wasm` ~2.0 MB, `index.data` ~0.5 MB.
+* Browser playtest (`default` script, headless Chromium, SwiftShader WebGL2 / OpenGL ES 3.0):
+  **passes** — `ok: true`, **0 console errors**, all 7 screenshots, title -> playing confirmed
+  through `window.__mistpineState`.
+* Visual QA matrix (PROMPT §12): all **7 scenarios pass with 0 console errors**, 3 screenshots
+  each: title, day spawn, character close-up, dusk forest, night campfire, shrine, night wolf,
+  misty dawn. Curated to `docs/qa/v0.1.0-*.png` (960x540, `low` preset, **software rendering**).
+* SSAO kernel rewrite verified **numerically bit-identical** to the previous GLSL `mat3`
+  formulation over 2000 randomised inputs (max difference 0.000e+00).
+
+**Three genuine bugs found and fixed while getting CI green**
+
+1. `tools/browser/playtest.mjs` used an undefined `fileMode` variable, so every playtest run died
+   at module load (`ReferenceError`). The earlier "fix" had only guarded `server.close()`; the
+   declaration itself was never added.
+2. The same harness slept a fixed 1.5 s after clicking the canvas and then asserted the menu had
+   become `playing`. Under SwiftShader the game renders at about 1 FPS, so a frame — and therefore
+   the UI update that consumes the latched click — often had not run within that window. **The
+   browser playtest job had never passed.** Now it waits for `window.__mistpineState.menu` to
+   reach the expected value (90 s timeout, state dump on failure), which makes it frame-rate
+   independent. The product was never at fault: the click is latched in C++ and consumed on the
+   next frame.
+3. Two M4 shaders did not cross-compile to HLSL SM 5.0, which only surfaced once the Windows dx11
+   job got far enough to compile them (it had always failed earlier, at the shaderc smoke test):
+   `vec3(0.0)` is not a legal HLSL constructor (D3DCompile X3014), and `mat3 * vec3` is not
+   portable (HLSL's `*` is component-wise and GLSL/HLSL disagree on constructor majorness). Fixed
+   with `vec3_splat()` and explicit tangent-basis vectors.
+
+Also fixed: the Windows shaderc smoke test masked the real tool exit codes and passed a
+leading-slash switch to `dumpbin` (MSYS rewrites `/dependents` into a Windows path); it now
+records real exit codes, probes `shaderc --version` first, and busts a cache key that could
+resurrect a stale binary.
+
+**Not verified (recorded honestly, §3.4)**
+
+* I **cannot view images**, so nothing here is claimed as "visually inspected" by the agent. The
+  curated screenshots in `docs/qa/` are release evidence for the owner to inspect.
+* No real-GPU measurement. Everything above is software rendering (SwiftShader / Mesa llvmpipe)
+  or the Noop renderer, which never executes shaders.
+* Windows, macOS and AppImage packaging is runner-only; I cannot download the artifacts (GitHub
+  object storage is blocked from this sandbox) and did not run them locally. Their evidence is
+  the runner-side dependency audit and foreign-CWD smoke test.
+* GitHub Pages could not be enabled: the API returns 403 "Resource not accessible by integration"
+  (the token is not a repository admin). This is an owner action and is reported as a blocker.
+* `gh workflow run release.yml` returns 404 because GitHub only dispatches workflows that exist on
+  the default branch. The dry run was therefore started by pushing the `v0.1.0-rc` tag, which the
+  workflow is explicitly designed to accept (it uses the workflow file from the pushed ref, and
+  the `publish` job is guarded so a non-`v0.1.0` tag publishes nothing).
+
+**Deferred** (unchanged from #15): distant tree impostors, distant mountain silhouettes, water
+refraction, shore foam, campfire smoke, heat shimmer, TAA.
