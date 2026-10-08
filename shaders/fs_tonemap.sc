@@ -9,6 +9,7 @@ SAMPLER2D(s_shafts, 2);   // half-res sun shafts
 SAMPLER2D(s_ssao, 3);     // half-res ambient occlusion (r)
 uniform vec4 u_post;   // x: exposure, y: saturation, z: vignette, w: contrast
 uniform vec4 u_grade;  // rgb: highlight tint, w: shadow tint strength
+uniform vec4 u_todGrade;   // rgb: time-of-day grading preset tint (M4.1)
 uniform vec4 u_effects;    // x: bloom strength, y: shafts strength, z: ssao min, w: fxaa on
 uniform vec4 u_texel;      // xy: scene texel size (uv units)
 
@@ -28,6 +29,8 @@ vec3 grade(vec3 _hdr) {
   c *= mix(vec3(0.94, 0.98, 1.04), u_grade.rgb, smoothstep(0.1, 0.8, luma));
   c = mix(vec3_splat(luma), c, u_post.y);
   c = clamp((c - 0.5) * u_post.w + 0.5, 0.0, 1.0);
+  // Time-of-day grading preset (dawn/morning/midday/dusk/night, blended by hour).
+  c = clamp(c * u_todGrade.rgb, 0.0, 1.0);
   return c;
 }
 

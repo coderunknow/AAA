@@ -6,12 +6,13 @@ aaa_add_shaders(aaa_shaders SHADERS
   vs_fullscreen.sc fs_sky.sc fs_tonemap.sc
   fs_bloom_bright.sc fs_blur.sc fs_shafts.sc fs_ssao.sc
   vs_water.sc fs_water.sc vs_fire.sc fs_fire.sc
+  vs_contact_shadow.sc fs_contact_shadow.sc
   vs_ui.sc fs_ui.sc)
 
 add_library(aaa_render STATIC
   renderer.cpp gpu_mesh.cpp shader_library.cpp atmosphere.cpp frustum.cpp screenshot.cpp
   terrain_renderer.cpp prop_renderer.cpp skin_renderer.cpp water_renderer.cpp object_renderer.cpp
-  ui_renderer.cpp)
+  contact_shadow_renderer.cpp ui_renderer.cpp)
 target_link_libraries(aaa_render PUBLIC aaa_game aaa_procgen bgfx bx bimg)
 add_dependencies(aaa_render aaa_shaders)
 aaa_target_defaults(aaa_render)

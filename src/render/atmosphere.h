@@ -19,6 +19,11 @@ struct AtmosphereState {
   float exposure;
   float daylight;
   Vec3 gradeHighlights;
+  // Time-of-day grading presets (PROMPT M4.1): post-tonemap grade, blended by hour
+  // across dawn / morning / midday / dusk / night.
+  Vec3 gradeTint;        // multiplicative colour grade
+  float gradeSaturation; // 1.0 = neutral
+  float gradeContrast;   // 1.0 = neutral
 };
 
 struct AtmosphereInputs {

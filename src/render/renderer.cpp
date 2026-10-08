@@ -17,6 +17,7 @@
 #include "render/terrain_renderer.h"
 #include "render/water_renderer.h"
 #include "render/object_renderer.h"
+#include "render/contact_shadow_renderer.h"
 #include "game/player_rig.h"
 #include "game/wolf_rig.h"
 
@@ -57,13 +58,13 @@ RenderSettings RenderSettings::preset(QualityPreset q) {
     case QualityPreset::Low:
       s.renderScale = 0.67f; s.shadowSize = 1024; s.shadowSplit = 22.0f; s.shadowFar = 110.0f;
       s.propDistance = 0.6f; s.grassDensity = 0.35f; s.terrainLod = 0.6f; s.textureQuality = 0;
-      s.bloom = false; s.shafts = false; s.ssao = false; s.fxaa = false;
+      s.bloom = false; s.shafts = false; s.ssao = false; s.fxaa = false; s.contactShadows = false;
       break;
     case QualityPreset::Medium:
       s.renderScale = 0.85f; s.shadowSize = 1536; s.shadowSplit = 26.0f; s.shadowFar = 140.0f;
       s.propDistance = 0.8f; s.grassDensity = 0.65f; s.terrainLod = 0.8f; s.textureQuality = 1;
       s.bloomIterations = 1; s.bloomStrength = 0.45f;
-      s.shafts = false; s.ssao = false; s.fxaa = true;
+      s.shafts = false; s.ssao = false; s.fxaa = true; s.contactShadows = false;
       break;
     case QualityPreset::High:
       break;  // defaults (target: integrated laptop GPU class, e.g. Iris Xe / M1)
@@ -213,6 +214,7 @@ bool Renderer::init(const RendererInit& in) {
   water_ = std::make_unique<WaterRenderer>();
   objects_ = std::make_unique<ObjectRenderer>();
   fire_ = std::make_unique<FireRenderer>();
+  contact_ = std::make_unique<ContactShadowRenderer>();
 
   auto U = [](const char* n, bgfx::UniformType::Enum t = bgfx::UniformType::Vec4, uint16_t num = 1) {
     return bgfx::createUniform(n, t, num);
@@ -235,6 +237,7 @@ bool Renderer::init(const RendererInit& in) {
   u_.screenParams = U("u_screenParams");
   u_.post = U("u_post");
   u_.grade = U("u_grade");
+  u_.todGrade = U("u_todGrade");
   u_.sHdr = U("s_hdr", bgfx::UniformType::Sampler);
   u_.sShadow = U("s_shadowMap", bgfx::UniformType::Sampler);
   // Post-effect chain (bloom / shafts / SSAO / FXAA) uniforms.
@@ -308,6 +311,7 @@ void Renderer::shutdown() {
   water_.reset();
   objects_.reset();
   fire_.reset();
+  contact_.reset();
   skinned_.reset();
   props_.reset();
   terrain_.reset();
@@ -318,7 +322,8 @@ void Renderer::shutdown() {
   if (bgfx::isValid(fullscreenVb_)) bgfx::destroy(fullscreenVb_);
   for (bgfx::UniformHandle h : {u_.sunDir, u_.sunColor, u_.skyAmbient, u_.groundAmbient, u_.fogColor, u_.fogParams,
                                 u_.camPos, u_.wind, u_.shadowParams, u_.shadowMtx, u_.skyZenith, u_.skyHorizon,
-                                u_.invViewProjSky, u_.screenParams, u_.post, u_.grade, u_.sHdr, u_.sShadow, u_.bright,
+                                u_.invViewProjSky, u_.screenParams, u_.post, u_.grade, u_.todGrade, u_.sHdr, u_.sShadow,
+                                u_.bright,
                                 u_.blurDir, u_.sunScreen, u_.texel, u_.effects, u_.ssaoProj, u_.ssaoInvProj, u_.ssaoParams,
                                 u_.kernel, u_.sBloom, u_.sShafts, u_.sSsao, u_.sBlur, u_.sDepth})
     if (bgfx::isValid(h)) bgfx::destroy(h);
@@ -517,6 +522,7 @@ bool Renderer::loadStep(const Game& game, double budgetMs) {
         water_->init(game.world(), *shaders_, props_->detailSampler(), props_->detailTexture());
         objects_->init(*shaders_, props_->detailSampler(), props_->detailTexture(), game.world());
         fire_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
+        contact_->init(*shaders_);
         loadStage_ = 3;
         AAA_LOG_INFO("renderer ready: %d prop meshes, %d shaders, GPU memory ~%.1f MB meshes, %.1f MB textures",
                      props_->meshCount(), shaders_->loadedShaderCount(),
@@ -699,6 +705,9 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   setSceneShadowMap(u_.sShadow, shadowsOn ? shadowTex_ : bgfx::TextureHandle{bgfx::kInvalidHandle});
   terrain_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.terrainLod, 0);
   props_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.propDistance, settings_.grassDensity);
+  // Short character contact shadows (M4.2, High only): under the characters, over the ground.
+  if (settings_.contactShadows && game.phase() != GamePhase::LoadingWorld)
+    contact_->submit(kViewScene, game, cv.eye, frustum);
   if (game.phase() != GamePhase::LoadingWorld) {
     skinned_->submit(kViewScene, playerMesh_, playerPalette_, false);
     const std::vector<Wolf>& wolves = game.wildlife().wolves();
@@ -740,8 +749,10 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   {
     // Rest / collapse transitions fade the exposure to black.
     const float fade = 1.0f - game.screenFade();
-    const float post[4] = {atm_.exposure * fade * fade, 1.06f, 0.28f, 1.06f};
+    // Saturation/contrast come from the time-of-day grading presets (M4.1).
+    const float post[4] = {atm_.exposure * fade * fade, atm_.gradeSaturation, 0.28f, atm_.gradeContrast};
     const float grade[4] = {atm_.gradeHighlights.x, atm_.gradeHighlights.y, atm_.gradeHighlights.z, 0.12f};
+    const float todGrade[4] = {atm_.gradeTint.x, atm_.gradeTint.y, atm_.gradeTint.z, 0.0f};
     const float screen[4] = {originBL ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
     // Effect strengths (0 = off) and the SSAO floor (1 = off).
     const float effects[4] = {
@@ -752,6 +763,7 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
     const float texel[4] = {1.0f / static_cast<float>(sceneW_), 1.0f / static_cast<float>(sceneH_), 0.0f, 0.0f};
     bgfx::setUniform(u_.post, post);
     bgfx::setUniform(u_.grade, grade);
+    bgfx::setUniform(u_.todGrade, todGrade);
     bgfx::setUniform(u_.screenParams, screen);
     bgfx::setUniform(u_.effects, effects);
     bgfx::setUniform(u_.texel, texel);

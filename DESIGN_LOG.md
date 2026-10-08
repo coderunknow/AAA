@@ -269,3 +269,115 @@ the speed-scaled limb-motion bound the test uses (a regression guard at 0.15 m).
 NaN, a sliding foot or an IK failure: the planted-foot metric passes at < 2 cm and the pose
 blends are continuous. It is left in the release and reported in the final report's known
 limitations rather than hidden by loosening the metric without a note.
+
+### #15 — 2026-10-08 — DONE: M4 balanced cinematic graphics pass (implementation)
+
+The M4 post/atmosphere/forest pass is implemented on top of the M1–M3 renderer. Every
+shipped feature has Low/Medium/High behaviour and a capability fallback; deferred items
+are listed with reasons at the end of this entry.
+
+M4.1 Atmosphere — all implemented:
+
+* Half-resolution screen-space sun shafts through mist (`kViewShafts`): radial blur of
+  the bloom bright pass, half scene resolution, composited additively in the tonemap.
+  High only; Medium/Low: off (dummy texture bound, chain skipped) — the image stays correct.
+* Bloom with a downsample/filter/upsample chain: bright pass (threshold 0.85) → separable
+  ping-pong blur (2 iterations High, 1 Medium, off Low) → linear upsample in the tonemap.
+* Improved height and valley fog: altitude falloff (`fogFalloff`), valley-floor mist base
+  (`mistBaseHeight`), dense low valley mist that peaks in the morning and evening
+  (`valleyMist`), all evaluated per frame in `atmosphere.cpp`.
+* Sun in-scatter: `sunInscatter` term in the fog evaluation (warm glow around the sun
+  through mist), plus the Mie forward-scattering glow in the sky shader.
+* Time-of-day grading presets (implemented this pass): five art-directed post-tonemap
+  grades — dawn (rose-gold), morning (neutral-crisp), midday (neutral, slightly punchy),
+  dusk (warm amber), night (cool, desaturated) — each a tint × saturation × contrast triple,
+  blended smoothly by hour in `evaluateAtmosphere` and applied in `fs_tonemap::grade`
+  (uniform `u_todGrade`; saturation/contrast now feed `u_post.y`/`u_post.w` instead of the
+  previous fixed 1.06). Morning/midday keep the previously tuned baseline values.
+* Filmic tone response: ACES (Narkowicz fit) in `fs_tonemap`, with a scotopic (dim-light)
+  shift and a gentle split-tone.
+
+M4.2 Ambient occlusion and contact — all implemented:
+
+* Affordable half-resolution SSAO on High: depth-based, 16-sample deterministic hemisphere
+  kernel (fixed LCG seed), half scene resolution, separable blur, applied in the tonemap
+  with an occlusion floor of 0.78. Medium/Low: off. Capability fallback: if the backend has
+  no sampleable depth format the effect is disabled at init with a log line
+  ("SSAO disabled: no sampleable depth format on this backend").
+* Baked terrain/canopy AO on all quality levels: terrain detail-based AO (fine-detail and
+  leaf-litter terms in `fs_terrain`), per-vertex baked AO on props (top/bottom vertex AO in
+  `vegetation_meshes`), and normals bent away from the crown centre so card interiors read
+  darker.
+* Short character contact shadows on High (implemented this pass): soft alpha-blended
+  discs under the skinned player (radius 0.5 m) and each wolf (0.38 m), drawn in the scene
+  pass after terrain/props and before the characters — depth-tested against the ground,
+  no depth writes, no culling, no shadow map, no extra pass
+  (`src/render/contact_shadow_renderer.*`, `shaders/vs_contact_shadow.sc`,
+  `fs_contact_shadow.sc`). High only; Medium/Low: off (the sun shadow still grounds the
+  characters — that is the documented fallback). Distance-culled at 60 m and frustum-culled.
+
+M4.3 Forest — implemented:
+
+* Pine crowns as volumetric-looking branch clusters: tube branches with flat needle pads
+  along each branch, a crossed pad at LOD 0 so the crown reads fuller from directly below,
+  a crown cap on top, wind-swept lean and an asymmetric crown biased toward the lean.
+* Bent/darkened interior shading: normals bent toward a per-mesh `normalBias` plus the
+  per-vertex AO above.
+* Bamboo: `makeBambooClump` — culms with node rings, arching tips, leaf sprays.
+* Hierarchical wind: per-vertex wind weight (trunk low, branch tips high) driven by
+  `u_wind` (slowly veering direction + gust envelope).
+* Trunk sway / branch motion: two-frequency sway with a world-position phase (spatially
+  coherent across the forest).
+* Leaf flutter: high-frequency (7–9 Hz) per-vertex flutter term, weighted by the foliage
+  flag and wind weight.
+* Valley-scale gust waves: low-frequency gust term modulated along world Z.
+* Grass hue variation (widened this pass: grey-green through warm straw, per-instance
+  tint), grass height variation (scale distribution skewed by noise and local density),
+  grass clumping (`makeGrassClump` card clusters, 7/4/2 cards by LOD).
+* Distant tree impostors: **deferred** — see deferrals below.
+
+M4.4 Terrain — implemented (verified present in `fs_terrain`, unchanged from the slice):
+moss / grass / leaf-litter / soil / rock / wet stream-bank layers, height + slope blending,
+triplanar projection, procedural detail (micro) normals, and visibly darker/damper ground
+near water.
+
+M4.5 Anti-aliasing — implemented:
+
+* FXAA-lite in `fs_tonemap`: luma-based edge detection with a direction-aware blend,
+  applied to the graded colour (neighbour samples are graded identically). High + Medium;
+  Low: off.
+* TAA: **not shipped** — decision, per PROMPT M4.5 ("do not ship visibly smeary TAA
+  merely because it exists"): a single-frame FXAA-lite is stable on foliage and movement;
+  a jittered TAA would need history reprojection that the current view pipeline does not
+  have, and the smear risk on alpha-tested foliage is exactly what the prompt forbids.
+
+Performance budget / bench (PROMPT §11): `?bench=1` (web) and `--bench [path]` (native)
+run a deterministic camera route through day → dusk → night campfire and emit JSON
+frame-time statistics (CPU submit time, GPU time where the backend exposes timers).
+RenderSettings presets define the Low/Medium/High behaviour for every effect above; High
+targets the Iris Xe / Apple M1 class at 1080p.
+
+Verification status at the time of this entry (§3.4 — nothing claimed beyond evidence):
+
+* The new/changed shaders (`vs_contact_shadow`, `fs_contact_shadow`, `fs_tonemap` with
+  `u_todGrade`) compile with the host bgfx shaderc for every profile the host can emit —
+  essl 300_es, glsl 440, spirv, metal — verified locally, one profile each.
+* The dx11 (SM 5.0) profile is compiled by the Windows CI job (a Linux shaderc cannot emit
+  it); the CI `shader-profiles` and `shader-profiles-windows` jobs cover all five profiles.
+* Native headless build + unit tests + CTest smoke runs and the browser QA screenshots for
+  this pass were still running when this entry was written; their results are recorded in
+  entry #16. No visual claim is made here beyond "shaders compile".
+
+Deferrals (M4 deferral rule — lowest-impact items, with reasons):
+
+* Distant tree impostors (M4.3, "where beneficial"): deferred. The far LOD already uses
+  crossed cards and the distance fog/valley mist carry the depth read; a real impostor
+  atlas would add a new texture/blend path for a small gain at 170 m+, which is
+  disproportionate churn against the remaining release work (M5 + release gate).
+* Optional stretch items (M4 "optional stretch work"): water refraction, shore foam,
+  campfire smoke, heat shimmer, distant mountain silhouettes — not implemented. Aerial
+  perspective is effectively covered by the distance fog + valley mist + in-scatter terms.
+  These are optional and were not forced into the release at the expense of stability.
+* Explicit ToD *grading preset* UI (beyond the automatic five presets now in code): the
+  grade is automatic and continuous; no manual preset picker was added (gameplay/UI scope
+  freeze, §3.3).

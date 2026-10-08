@@ -22,6 +22,7 @@ class SkinRenderer;
 class WaterRenderer;
 class ObjectRenderer;
 class FireRenderer;
+class ContactShadowRenderer;
 
 enum class QualityPreset : int { Low = 0, Medium = 1, High = 2 };
 const char* qualityName(QualityPreset q);
@@ -50,6 +51,7 @@ struct RenderSettings {
   float ssaoRadius = 1.1f;
   float ssaoIntensity = 1.4f;
   bool fxaa = true;             // FXAA-lite in the tonemap pass
+  bool contactShadows = true;   // short character contact shadows (High only, M4.2)
   static RenderSettings preset(QualityPreset q);
 };
 
@@ -146,6 +148,7 @@ class Renderer {
   std::unique_ptr<WaterRenderer> water_;
   std::unique_ptr<ObjectRenderer> objects_;
   std::unique_ptr<FireRenderer> fire_;
+  std::unique_ptr<ContactShadowRenderer> contact_;
   UiRenderer ui_;
   ScreenshotCallback screenshotCb_;
   bool screenshotDone_ = false;
@@ -176,7 +179,8 @@ class Renderer {
 
   struct Uniforms {
     bgfx::UniformHandle sunDir, sunColor, skyAmbient, groundAmbient, fogColor, fogParams, camPos, wind, shadowParams,
-        shadowMtx, skyZenith, skyHorizon, fireLight, fireColor, invViewProjSky, screenParams, post, grade, sHdr, sShadow;
+        shadowMtx, skyZenith, skyHorizon, fireLight, fireColor, invViewProjSky, screenParams, post, grade, todGrade,
+        sHdr, sShadow;
     // Post chain.
     bgfx::UniformHandle bright, blurDir, sunScreen, texel, effects, ssaoProj, ssaoInvProj, ssaoParams;
     bgfx::UniformHandle kernel;  // vec4[16]
