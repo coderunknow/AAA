@@ -174,6 +174,14 @@ jobs:
         run: |
           cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
             { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "windows configure failed"; exit 1; }
+      - name: Compile shaders (separate step)
+        run: |
+          # Compiled as its own target first: the dx11 profile needs the Windows
+          # shaderc, which loads d3dcompiler at run time; doing this before the
+          # full (fully parallel) build keeps that load out of a heavily loaded
+          # build and makes a shader failure point at the shader, not the link.
+          cmake --build --preset native-release --target aaa_shaders > /tmp/shaders.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/shaders.log "windows shader compilation failed"; exit 1; }
       - name: Build native-release
         run: |
           cmake --build --preset native-release > /tmp/build.log 2>&1 ||
@@ -198,8 +206,16 @@ jobs:
           unzip -q "mistpine-v${VERSION}-windows-x64.zip" -d /tmp/mistpine-smoke
           cd /tmp   # deliberately not the package directory
           /tmp/mistpine-smoke/Mistpine/mistpine.exe --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1
+          rc=$?
           cat smoke.log
-          if grep -q "\[error\]" smoke.log; then echo "ERROR-level log lines in the packaged smoke run" >&2; exit 1; fi
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged Windows smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" smoke.log; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged Windows smoke test logged errors"
+            exit 1
+          fi
       - name: Render verification attempt (D3D11)
         continue-on-error: true
         run: |
@@ -305,16 +321,32 @@ jobs:
           tar -xzf "mistpine-v${VERSION}-linux-x86_64.tar.gz" -C /tmp/mistpine-smoke
           cd /tmp
           /tmp/mistpine-smoke/Mistpine/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-tar.log 2>&1
+          rc=$?
           cat smoke-tar.log
-          if grep -q "\[error\]" smoke-tar.log; then echo "ERROR-level log lines in the packaged smoke run" >&2; exit 1; fi
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-tar.log "packaged tar.gz smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" smoke-tar.log; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-tar.log "packaged tar.gz smoke test logged errors"
+            exit 1
+          fi
       - name: Packaged smoke test (AppImage payload, foreign CWD)
         run: |
           rm -rf /tmp/mistpine-appimage && mkdir -p /tmp/mistpine-appimage
           (cd /tmp/mistpine-appimage && "$GITHUB_WORKSPACE/mistpine-v${VERSION}-linux-x86_64.AppImage" --appimage-extract >/dev/null)
           cd /
           /tmp/mistpine-appimage/squashfs-root/usr/bin/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-appimage.log 2>&1
+          rc=$?
           cat smoke-appimage.log
-          if grep -q "\[error\]" smoke-appimage.log; then echo "ERROR-level log lines in the AppImage smoke run" >&2; exit 1; fi
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-appimage.log "packaged AppImage smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" smoke-appimage.log; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-appimage.log "packaged AppImage smoke test logged errors"
+            exit 1
+          fi
       - name: Render verification (xvfb + Mesa llvmpipe, OpenGL)
         run: |
           cd /tmp
@@ -412,8 +444,16 @@ jobs:
         run: |
           cd /tmp
           "$GITHUB_WORKSPACE/Mistpine.app/Contents/MacOS/mistpine" --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1
+          rc=$?
           cat smoke.log
-          if grep -q "\[error\]" smoke.log; then echo "ERROR-level log lines in the packaged smoke run" >&2; exit 1; fi
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged macOS smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" smoke.log; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged macOS smoke test logged errors"
+            exit 1
+          fi
       - name: Render verification attempt (Metal)
         continue-on-error: true
         run: |

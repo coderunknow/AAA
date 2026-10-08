@@ -19,22 +19,30 @@ if(EMSCRIPTEN)
   set_property(TARGET mistpine APPEND PROPERTY LINK_DEPENDS "${AAA_WEB_SHELL}")
   target_link_options(mistpine PRIVATE
     "--shell-file=${AAA_WEB_SHELL}"
-    "--preload-file=${CMAKE_BINARY_DIR}/assets@/assets"
     "-sMAX_WEBGL_VERSION=2" "-sMIN_WEBGL_VERSION=2"
     "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=256MB" "-sSTACK_SIZE=1MB"
     "-sENVIRONMENT=web" "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8']"
     "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']")
   if(AAA_SINGLE_FILE)
-    # One self-contained HTML: the .data bundle is embedded in the wasm and the wasm
-    # is embedded (base64) in the JS, so the page needs no fetch at all — which is
-    # what makes it open directly from file:// in Chrome (PROMPT §9.1).
-    target_link_options(mistpine PRIVATE "-sSINGLE_FILE=1")
+    # One self-contained HTML, openable from file:// (PROMPT §9.1).
+    #
+    # --embed-file (not --preload-file) puts the asset bundle *inside* the wasm
+    # instead of a separate index.data. That matters: -sSINGLE_FILE=1 base64-inlines
+    # the wasm into the JS and the JS into the HTML, but it does NOT inline a
+    # --preload-file bundle, so a preloaded build still tries to fetch index.data and
+    # fails under file:// ("URL scheme \"file\" is not supported"). Embedding is what
+    # makes the artifact genuinely single-file.
+    target_link_options(mistpine PRIVATE
+      "-sSINGLE_FILE=1"
+      "--embed-file=${CMAKE_BINARY_DIR}/assets@/assets")
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_custom_command(TARGET mistpine POST_BUILD
       COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/make_single_file.py"
               "$<TARGET_FILE_DIR:mistpine>"
       COMMENT "inline js -> single-file html"
       VERBATIM)
+  else()
+    target_link_options(mistpine PRIVATE "--preload-file=${CMAKE_BINARY_DIR}/assets@/assets")
   endif()
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     # (No -gsource-map: needs llvm-dwarfdump, absent from the sandbox LLVM; DWARF from -g is kept.)
