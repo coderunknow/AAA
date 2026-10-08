@@ -31,16 +31,30 @@ if [[ ! -d tools/browser/node_modules ]]; then
   (cd tools/browser && npm ci --no-audit --no-fund --loglevel=error)
 fi
 
-scenarios=(spawn character dusk dawn camp shrine wolves)
+# Scenario:time-of-day pairs for the full PROMPT §12 matrix: title (no scenario),
+# day spawn, character close-up, dusk forest, night campfire, shrine, night wolf,
+# misty dawn. The time-pinning scenarios (spawn/character/dusk/dawn) override the
+# hours value themselves; camp/shrine/wolves use it.
+scenarios=(
+  "spawn:9"        # day spawn (scenario pins 09:00)
+  "character:10.5" # character close-up (scenario pins 10:30)
+  "dusk:18.6"      # dusk forest (scenario pins 18:36)
+  "dawn:6.1"       # misty dawn (scenario pins 06:06)
+  "camp:22"        # night campfire
+  "shrine:9"       # shrine (day)
+  "wolves:23"      # night wolf
+)
 mkdir -p "$OUT_DIR"
 
 echo "QA matrix: ${#scenarios[@]} scenarios + title, ${WIDTH}x${HEIGHT}, quality=$QUALITY (software rendering)"
-for qa in "${scenarios[@]}"; do
-  echo "== ?qa=$qa"
+for entry in "${scenarios[@]}"; do
+  qa="${entry%%:*}"
+  hours="${entry##*:}"
+  echo "== ?qa=$qa&hours=$hours"
   (cd tools/browser && node playtest.mjs \
       --dir "../../$BUILD_DIR" \
       --out "../../$OUT_DIR/$qa" \
-      --query "qa=$qa&hours=9&quality=$QUALITY&play=1" \
+      --query "qa=$qa&hours=$hours&quality=$QUALITY&play=1" \
       --script qa --width "$WIDTH" --height "$HEIGHT") > "$OUT_DIR/$qa.log" 2>&1 || {
     echo "scenario '$qa' failed:" >&2
     tail -40 "$OUT_DIR/$qa.log" >&2
