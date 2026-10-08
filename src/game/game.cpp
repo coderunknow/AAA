@@ -5,6 +5,8 @@
 #include <cstdio>
 
 #include "core/log.h"
+#include "game/player_rig.h"
+#include "game/wolf_rig.h"
 
 namespace aaa {
 namespace {
@@ -24,6 +26,10 @@ Game::Game(const GameConfig& config) : config_(config) {
   world_ = std::make_unique<World>(config.worldSeed, config.heightfieldResolution);
 }
 
+// Out-of-line so unique_ptr<PlayerRig>/<WolfRig> see complete types (game.cpp includes
+// the rig headers).
+Game::~Game() = default;
+
 void Game::startPlaying() {
   const WorldLayout& L = world_->layout();
   const Vec2 sp = L.spawn;
@@ -42,6 +48,19 @@ void Game::startPlaying() {
   world_->streamAround(player_.position(), config_.streamRadius, config_.streamReleaseRadius, 1000);
   world_->streamDetailAround(player_.position(), config_.detailRadius, config_.detailReleaseRadius, 1000);
   camera_.reset(player_);
+  // Procedural skinned rigs (PROCEDURAL §10): generated once per quality level here,
+  // never rebuilt per frame. Wolves get one rig each, so their animation state lives
+  // with the rig rather than in the AI.
+  if (!playerRig_) playerRig_ = std::make_unique<PlayerRig>();
+  playerRig_->build(rigQuality_);
+  playerRig_->reset(player_, *world_);
+  wolfRigs_.clear();
+  for (size_t i = 0; i < wildlife_.wolves().size(); ++i) {
+    auto rig = std::make_unique<WolfRig>();
+    rig->build(rigQuality_);
+    rig->reset(wildlife_.wolves()[i], *world_);
+    wolfRigs_.push_back(std::move(rig));
+  }
   phase_ = GamePhase::Playing;
   AAA_LOG_INFO("world ready: spawn (%.1f, %.1f, %.1f), %d chunks streamed, %d forage spots%s", player_.position().x,
                player_.position().y, player_.position().z, world_->generatedChunkCount(),
@@ -134,6 +153,7 @@ void Game::update(float dt, const InputFrame& input, double loadBudgetMs) {
     // Keep the framing live behind the title / pause screens (no input, no simulation).
     camera_.update(dt, InputFrame{}, player_, *world_);
     animator_.update(dt, player_);
+    updateRigs(0.0f);  // idle poses, no time advance
     return;
   }
 
@@ -156,6 +176,7 @@ void Game::update(float dt, const InputFrame& input, double loadBudgetMs) {
   player_.update(dt, wish, in.sprint, in.walk, in.jump, in.crouchToggle, *world_);
   camera_.update(dt, input, player_, *world_);
   animator_.update(dt, player_);
+  updateRigs(dt);
   world_->streamAround(player_.position(), config_.streamRadius, config_.streamReleaseRadius,
                        config_.maxChunksPerFrame);
   world_->streamDetailAround(player_.position(), config_.detailRadius, config_.detailReleaseRadius, 1);
@@ -214,6 +235,8 @@ void Game::update(float dt, const InputFrame& input, double loadBudgetMs) {
   }
 
   drinkCooldown_ = std::fmax(0.0f, drinkCooldown_ - dt);
+  gestureAge_ += dt;
+  if (gestureAge_ > 3.0f) gesture_ = PlayerGesture::None;  // short one-shot poses only
   if (controllable) updateInteraction(input);
   else prompt_.clear();
   updateTransition(dt);
@@ -281,6 +304,8 @@ void Game::updateInteraction(const InputFrame& input) {
       } else {
         best->available = false;
         best->regrowAt = y.regrowSeconds > 0.0 ? playSeconds_ + y.regrowSeconds : 0.0;
+        gesture_ = PlayerGesture::Gather;
+        gestureAge_ = 0.0f;
         events_.push_back({GameEvent::Pickup, best->pos, static_cast<float>(y.item), "+" + countText(added, y.item)});
       }
     }
@@ -297,6 +322,8 @@ void Game::updateInteraction(const InputFrame& input) {
           inventory_.take(ItemKind::Branch, 1);
           c.fuel = std::fmin(Campfire::kMaxFuel, c.fuel + Campfire::kFuelPerBranch);
           events_.push_back({GameEvent::FireFed, c.pos, 0.0f, {}});
+          gesture_ = PlayerGesture::Fire;
+          gestureAge_ = 0.0f;
         }
       }
     } else if (inventory_.get(ItemKind::Branch) >= 2) {
@@ -306,6 +333,8 @@ void Game::updateInteraction(const InputFrame& input) {
         c.fuel = Campfire::kStartFuel * 0.6f;
         c.age = 0.0f;
         events_.push_back({GameEvent::FireLit, c.pos, 0.0f, "The embers catch again."});
+        gesture_ = PlayerGesture::Fire;
+        gestureAge_ = 0.0f;
       }
     }
     if (!prompt_.empty()) return;
@@ -320,6 +349,8 @@ void Game::updateInteraction(const InputFrame& input) {
       transitionTime_ = 0.0f;
       restPoint_ = sh.restPoint;
       hasRestPoint_ = true;
+      gesture_ = PlayerGesture::Rest;
+      gestureAge_ = 0.0f;
     }
     return;
   }
@@ -332,6 +363,8 @@ void Game::updateInteraction(const InputFrame& input) {
       survival_.drink(22.0f);
       drinkCooldown_ = 0.8f;
       events_.push_back({GameEvent::Drink, ahead, 0.0f, {}});
+      gesture_ = PlayerGesture::Drink;
+      gestureAge_ = 0.0f;
     }
   }
 
@@ -385,9 +418,13 @@ void Game::eatSomething() {
   if (inventory_.take(ItemKind::Berries, 1)) {
     survival_.eat(11.0f, 4.0f);
     events_.push_back({GameEvent::Eat, player_.position(), 0.0f, "You eat a handful of berries."});
+    gesture_ = PlayerGesture::Eat;
+    gestureAge_ = 0.0f;
   } else if (inventory_.take(ItemKind::Mushroom, 1)) {
     survival_.eat(16.0f, 1.0f);
     events_.push_back({GameEvent::Eat, player_.position(), 0.0f, "You eat a mushroom. Earthy, filling."});
+    gesture_ = PlayerGesture::Eat;
+    gestureAge_ = 0.0f;
   } else {
     notify("You have nothing to eat.");
   }
@@ -442,6 +479,38 @@ void Game::updateTransition(float dt) {
     fade_ = std::fmax(0.0f, 1.0f - transitionTime_ / (kFadeSeconds * 1.5f));
     if (fade_ <= 0.0f) transition_ = Transition::None;
   }
+}
+
+void Game::updateRigs(float dt) {
+  if (!playerRig_) return;
+  const Vec3 camFwd = game_camera_forward();
+  const float cold = clampf((14.0f - survival_.feltTemperature()) / 14.0f, 0.0f, 1.0f) * (1.0f - 0.5f * fireHeat_);
+  playerRig_->update(dt, player_, *world_, camFwd, cold, fireHeat_, gesture_, gestureAge_);
+  const auto& wolves = wildlife_.wolves();
+  for (size_t i = 0; i < wolfRigs_.size() && i < wolves.size(); ++i) {
+    // A movement step per wolf is derived from the position change, so a rig never
+    // accumulates drift if the AI teleports a wolf (spawn, flee reset).
+    wolfRigs_[i]->update(dt, wolves[i], *world_);
+  }
+}
+
+Vec3 Game::game_camera_forward() const {
+  const CameraView& v = camera_.view();
+  const Vec3 d = v.target - v.eye;
+  return lengthSq(d) > 1e-6f ? normalize(d) : Vec3{0, 0, 1};
+}
+
+void Game::setRigQuality(int q) {
+  const int clamped = std::max(0, std::min(2, q));
+  if (clamped == rigQuality_) return;
+  rigQuality_ = clamped;
+  if (playerRig_) {
+    playerRig_->build(rigQuality_);  // rebuilds only when the detail level changes
+    playerRig_->reset(player_, *world_);
+  }
+  for (auto& rig : wolfRigs_) rig->build(rigQuality_);
+  for (size_t i = 0; i < wolfRigs_.size() && i < wildlife_.wolves().size(); ++i)
+    wolfRigs_[i]->reset(wildlife_.wolves()[i], *world_);
 }
 
 bool Game::applyScenario(const std::string& name) {

@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "core/math.h"
 #include "render/atmosphere.h"
@@ -16,7 +17,7 @@ class Game;
 class ShaderLibrary;
 class TerrainRenderer;
 class PropRenderer;
-class CharacterRenderer;
+class SkinRenderer;
 class WaterRenderer;
 class ObjectRenderer;
 class FireRenderer;
@@ -113,7 +114,11 @@ class Renderer {
   std::unique_ptr<ShaderLibrary> shaders_;
   std::unique_ptr<TerrainRenderer> terrain_;
   std::unique_ptr<PropRenderer> props_;
-  std::unique_ptr<CharacterRenderer> character_;
+  std::unique_ptr<SkinRenderer> skinned_;
+  int playerMesh_ = -1;
+  std::vector<int> wolfMeshes_;
+  std::vector<Mat4> playerPalette_;
+  std::vector<std::vector<Mat4>> wolfPalettes_;
   std::unique_ptr<WaterRenderer> water_;
   std::unique_ptr<ObjectRenderer> objects_;
   std::unique_ptr<FireRenderer> fire_;

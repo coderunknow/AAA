@@ -9,7 +9,7 @@
 
 #include "core/log.h"
 #include "game/game.h"
-#include "render/character_renderer.h"
+#include "render/skin_renderer.h"
 #include "render/frustum.h"
 #include "render/gpu_mesh.h"
 #include "render/prop_renderer.h"
@@ -17,7 +17,8 @@
 #include "render/terrain_renderer.h"
 #include "render/water_renderer.h"
 #include "render/object_renderer.h"
-#include "game/wolf_pose.h"
+#include "game/player_rig.h"
+#include "game/wolf_rig.h"
 
 namespace aaa {
 namespace {
@@ -190,7 +191,7 @@ bool Renderer::init(const RendererInit& in) {
   }
   terrain_ = std::make_unique<TerrainRenderer>();
   props_ = std::make_unique<PropRenderer>();
-  character_ = std::make_unique<CharacterRenderer>();
+  skinned_ = std::make_unique<SkinRenderer>();
   water_ = std::make_unique<WaterRenderer>();
   objects_ = std::make_unique<ObjectRenderer>();
   fire_ = std::make_unique<FireRenderer>();
@@ -239,7 +240,7 @@ void Renderer::shutdown() {
   water_.reset();
   objects_.reset();
   fire_.reset();
-  character_.reset();
+  skinned_.reset();
   props_.reset();
   terrain_.reset();
   ui_.shutdown();
@@ -343,7 +344,12 @@ bool Renderer::loadStep(const Game& game, double budgetMs) {
     case 2:
       if (props_->initStep(*shaders_, budgetMs, settings_.textureQuality)) {
         terrain_->bindDetail(props_->detailSampler(), props_->detailTexture());
-        character_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
+        skinned_->init(*shaders_, props_->detailSampler(), props_->detailTexture(), 32);
+        // One GPU mesh per rig: the player and each wolf's body (generated once during
+        // loading, never per frame — PROMPT §10.2).
+        playerMesh_ = skinned_->upload(game.playerRig().mesh());
+        wolfMeshes_.clear();
+        for (const auto& rig : game.wolfRigs()) wolfMeshes_.push_back(skinned_->upload(rig->mesh()));
         water_->init(game.world(), *shaders_, props_->detailSampler(), props_->detailTexture());
         objects_->init(*shaders_, props_->detailSampler(), props_->detailTexture(), game.world());
         fire_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
@@ -448,16 +454,19 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   const Vec3 fwd = normalize(cv.target - cv.eye);
   const Vec3 fwdFlat = normalize(Vec3{fwd.x, 0.0f, fwd.z} + Vec3{0.0f, 0.0f, 1e-4f});
 
-  // --- render interpolation: rebase characters onto the interpolated root --------------------
-  // The simulation runs at a fixed 60 Hz; characters are rebased from their current
-  // simulation root onto the interpolated root so they move smoothly at any frame rate.
-  const Mat4 playerRebase = game.animator().renderRoot(interpAlpha) * game.animator().root().inverseRigid();
-  auto wolfRebase = [&](const Wolf& w) {
-    const Mat4 cur = Mat4::translation(w.pos) * Mat4::rotationY(w.yaw);
-    const Vec3 p = lerp(w.prevPos, w.pos, interpAlpha);
-    const float yaw = w.prevYaw + wrapAngle(w.yaw - w.prevYaw) * interpAlpha;
-    return Mat4::translation(p) * Mat4::rotationY(yaw) * cur.inverseRigid();
-  };
+  // --- render interpolation (PROMPT §8.6) ----------------------------------------------------
+  // The simulation runs at a fixed 60 Hz. Skinned characters are interpolated by
+  // blending their joint palettes between the last two simulation steps, which keeps
+  // limbs smooth at any render frame rate; joint matrices already carry the
+  // character's world transform, so no rebasing is needed.
+  playerPalette_.clear();
+  wolfPalettes_.clear();
+  if (game.playerRig().mesh().triangleCount() > 0)
+    game.playerRig().fillSkinPalette(interpAlpha, playerPalette_);
+  for (const auto& rig : game.wolfRigs()) {
+    wolfPalettes_.emplace_back();
+    rig->fillSkinPalette(interpAlpha, wolfPalettes_.back());
+  }
 
   // --- shadow cascades -----------------------------------------------------------------------
   float shadowMtx[32];
@@ -498,18 +507,16 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
       if (c == 0) setFrameUniforms(game, shadowMtx);  // first submit of the frame (wind/time used by casters)
       terrain_->submitShadow(vid, center, radius, c == 0 ? 0 : 2, game.world());
       props_->submitShadow(vid, game.world(), center, radius, c == 0 ? 1 : 2, c == 1);
-      character_->submit(vid, game.animator().parts(), true, &playerRebase);
       if (game.phase() != GamePhase::LoadingWorld) {
-        objects_->submit(vid, game, center, nullptr, true, time_);
-        if (c == 0) {
-          WolfPose pose;
-          for (const Wolf& w : game.wildlife().wolves()) {
-            if (length(w.pos - center) > radius) continue;
-            buildWolfPose(w, time_, pose);
-            const Mat4 rebase = wolfRebase(w);
-            character_->submit(vid, pose.data(), kWolfPartCount, true, &rebase);
-          }
+        skinned_->submit(vid, playerMesh_, playerPalette_, true);
+        for (size_t wi = 0; wi < wolfPalettes_.size(); ++wi) {
+          const std::vector<Wolf>& wolves = game.wildlife().wolves();
+          if (wi >= wolves.size()) break;
+          if (length(wolves[wi].pos - center) > radius + 1.5f) continue;
+          if (wi >= wolfMeshes_.size()) break;
+          skinned_->submit(vid, wolfMeshes_[wi], wolfPalettes_[wi], true);
         }
+        objects_->submit(vid, game, center, nullptr, true, time_);
       }
     }
   } else {
@@ -528,16 +535,15 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   setSceneShadowMap(u_.sShadow, shadowsOn ? shadowTex_ : bgfx::TextureHandle{bgfx::kInvalidHandle});
   terrain_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.terrainLod, 0);
   props_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.propDistance, settings_.grassDensity);
-  if (game.phase() != GamePhase::LoadingWorld) character_->submit(kViewScene, game.animator().parts(), false, &playerRebase);
   if (game.phase() != GamePhase::LoadingWorld) {
-    objects_->submit(kViewScene, game, cv.eye, &frustum, false, time_);
-    WolfPose pose;
-    for (const Wolf& w : game.wildlife().wolves()) {
-      if (lengthSq(w.pos - cv.eye) > 160.0f * 160.0f || !frustum.sphereVisible(w.pos + Vec3{0, 0.5f, 0}, 1.2f)) continue;
-      buildWolfPose(w, time_, pose);
-      const Mat4 rebase = wolfRebase(w);
-      character_->submit(kViewScene, pose.data(), kWolfPartCount, false, &rebase);
+    skinned_->submit(kViewScene, playerMesh_, playerPalette_, false);
+    const std::vector<Wolf>& wolves = game.wildlife().wolves();
+    for (size_t wi = 0; wi < wolfPalettes_.size() && wi < wolfMeshes_.size() && wi < wolves.size(); ++wi) {
+      const Wolf& w = wolves[wi];
+      if (lengthSq(w.pos - cv.eye) > 170.0f * 170.0f || !frustum.sphereVisible(w.pos + Vec3{0, 0.5f, 0}, 1.4f)) continue;
+      skinned_->submit(kViewScene, wolfMeshes_[wi], wolfPalettes_[wi], false);
     }
+    objects_->submit(kViewScene, game, cv.eye, &frustum, false, time_);
   }
   water_->submit(kViewScene, frustum);  // translucent: after opaque geometry
 
