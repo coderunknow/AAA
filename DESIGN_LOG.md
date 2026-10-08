@@ -548,3 +548,58 @@ audit step described above. Every other job in the pipeline is now confirmed gre
 **Evidence status.** The parser fix is tested locally (13/13). It has **not** yet run against a
 real Windows executable — the confirming dry run is queued. The claim that the Windows artifact
 is x86-64 is *asserted by the new check*, not yet observed.
+
+### #19 — 2026-10-08 — DONE: Windows dependency audit now returns a real verdict — the artifact is clean and genuinely x64
+
+The corrected audit (`f8bd485`) ran on the Windows runner and produced a complete verdict. This
+closes the question left open in #18.
+
+**Observed (release dry run `37805433751`):**
+
+```
+== toolchain ==
+/c/mingw64/bin/gcc
+x86_64-w64-mingw32
+no cl on PATH
+== image ==
+PE32+ executable for MS Windows 5.02 (GUI), x86-64, 19 sections
+== audit ==   (24 imports)
+ADVAPI32 GDI32 IMM32 KERNEL32 OLEAUT32 SETUPAPI SHELL32 USER32 VERSION WINMM ole32   [system]
+api-ms-win-crt-{convert,environment,filesystem,heap,locale,math,multibyte,private,runtime,
+                stdio,string,time,utility}-l1-1-0                                     [ucrt]
+```
+
+**Findings.**
+
+1. The Windows artifact **is** x86-64 — a genuine PE32+ image from `x86_64-w64-mingw32`. The
+   machine check added in #18 passes. PROMPT 2's "Windows x64" is satisfied.
+2. `-static -static-libgcc -static-libstdc++` (added in `59a4088`) **works**: no `libgcc_s_*`,
+   no `libstdc++-6`, no `libwinpthread-1`, and no `msvcrt` — the build targets the UCRT instead.
+3. No SDL, bgfx, bx or bimg DLL: everything is linked in.
+4. No Visual C++ redistributable (`vcruntime*`, `msvcp*`, `msvcr*`).
+
+The only non-obvious entries are the 13 `api-ms-win-crt-*` API sets. These are **forwarders for
+`ucrtbase.dll`, i.e. the Windows Universal CRT, an operating-system component from Windows 10
+onwards** — not a redistributable the player installs. My #17/#18 forbidden list treated them as
+toolchain dependencies, which was wrong.
+
+**DECISION.** Move `api-ms-win-crt-*` and `ucrtbase` out of `FORBIDDEN` into a separate group
+that is *allowed but reported* (`[ucrt: OS component, Windows 10+]`), together with a summary
+line. This does not loosen the gate on anything that matters: SDL/bgfx, the MinGW runtime DLLs
+and the Visual C++ runtime all remain hard failures. The consequence — **Windows 10 or later is
+the floor for the Windows artifact** — is now stated in `README.md` and in the release notes, so
+it is disclosed rather than hidden.
+
+**DONE / evidence.**
+
+* `scripts/pe_deps.py --self-test`: **21/21 checks pass** (PE32 and PE32+, plus the new UCRT
+  cases and the negative cases from #18).
+* Replayed the **exact 24-DLL import list reported by the Windows runner** through the parser as
+  a built PE32+ image: the audit **passes (exit 0)**. The same list plus `libwinpthread-1.dll`
+  **fails (exit 1)** — so the relaxation did not blunt the check.
+* `README.md` and `docs/release-notes-v0.1.0.md` now state the Windows 10+ floor and why.
+
+**Still open:** this changes `pe_deps.py` again, so the confirming dry run has not yet been
+executed. Everything else in `37805433751` was green: shader-assets, web, macOS arm64 and Linux
+(including the AppImage smoke test and the llvmpipe render verification). CI `37805442982` is
+green on all 8 jobs.

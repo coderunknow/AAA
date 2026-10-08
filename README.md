@@ -68,7 +68,7 @@ Every desktop artifact is **portable**: extract it and run it, with no installer
 |---|---|---|
 | `mistpine-v0.1.0-web.zip` | any (static web host) | Upload the four files to any static host and open `index.html`. |
 | `mistpine-v0.1.0-web-singlefile.html` | Chrome | Double-click the file, or open it with `file://`. One self-contained HTML — no server needed. |
-| `mistpine-v0.1.0-windows-x64.zip` | Windows x64 | Unzip, then run `Mistpine.exe`. |
+| `mistpine-v0.1.0-windows-x64.zip` | Windows x64 (Windows 10 or later) | Unzip, then run `Mistpine.exe`. |
 | `mistpine-v0.1.0-linux-x86_64.AppImage` | Linux x86_64 | `chmod +x mistpine-v0.1.0-linux-x86_64.AppImage`, then run it. |
 | `mistpine-v0.1.0-linux-x86_64.tar.gz` | Linux x86_64 | `tar xzf mistpine-v0.1.0-linux-x86_64.tar.gz`, then run `mistpine`. |
 | `mistpine-v0.1.0-macos-arm64.zip` | macOS (Apple silicon) | Unzip, then open `Mistpine.app`. |
@@ -78,6 +78,12 @@ Every desktop artifact is **portable**: extract it and run it, with no installer
 - **Windows:** SmartScreen may warn. Choose **More info → Run anyway**.
 - **macOS:** the app is **ad-hoc signed, not notarized**. Use **right-click → Open**, or
   **System Settings → Privacy & Security → Open Anyway**.
+
+The Windows build links the C runtime statically, so it carries no compiler runtime DLLs, but
+it does import the Windows Universal CRT (`api-ms-win-crt-*`), which ships with the operating
+system from Windows 10 onwards — so Windows 10 or later is the floor for that artifact. The
+release pipeline asserts this: `scripts/pe_deps.py` reads the executable's import table on every
+Windows build and fails on any dependency that is not an OS component.
 
 `SHA256SUMS.txt` covers every other release asset.
 

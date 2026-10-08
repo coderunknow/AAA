@@ -47,13 +47,23 @@ DIR_COUNT = 16
 # A dependency is "system" if Windows itself ships it.  Anything a Mistpine
 # build drags in from the toolchain (SDL, bgfx, a MinGW runtime DLL or an MSVC
 # redistributable) is not: the artifact has to run on a clean machine.
+#
+# The Windows Universal CRT is deliberately NOT forbidden.  MinGW-w64 links the
+# UCRT through the `api-ms-win-crt-*` API sets (forwarders for ucrtbase.dll),
+# and both are operating-system components on Windows 10 and later -- they are
+# not a redistributable the player has to install.  They are reported
+# separately below so the fact stays visible in the log, and the release notes
+# state the resulting floor.  The Visual C++ *runtime* (vcruntime, msvcp,
+# msvcr) stays forbidden: that one does require a redistributable.
 FORBIDDEN = re.compile(
     r"^(sdl\d*|bgfx|bx|bimg|fcpp|freetype|glfw|"
     r"libgcc_s_.*|libstdc\+\+-.*|libwinpthread-.*|libgomp-.*|libssp-.*|"
-    r"msvcp\d+|msvcr\d+|vcruntime\d*|ucrtbase|vcomp\d*|concrt\d*|mfc\d*|"
-    r"api-ms-win-crt-.*)",
+    r"msvcp\d+|msvcr\d+|vcruntime\d*|vcomp\d*|concrt\d*|mfc\d*)",
     re.IGNORECASE,
 )
+
+# Allowed, but called out: present because the toolchain targets the UCRT.
+UCRT = re.compile(r"^(api-ms-win-crt-.*|ucrtbase.*)$", re.IGNORECASE)
 
 # Modules that ship with the OS and are therefore always present.
 SYSTEM_HINT = (
@@ -302,6 +312,13 @@ def self_test() -> int:
         (["KERNEL32.dll", "VCRUNTIME140.dll"], [], True),
         (["KERNEL32.dll", "libwinpthread-1.dll"], [], True),
         (["KERNEL32.dll"], ["bgfx.dll"], True),
+        # The UCRT API sets are allowed: they are OS components, not a redistributable.
+        (["KERNEL32.dll"] + [f"api-ms-win-crt-{n}-l1-1-0.dll" for n in
+                             ("heap", "math", "runtime", "stdio", "string")], [], False),
+        (["KERNEL32.dll", "ucrtbase.dll"], [], False),
+        # ... but the Visual C++ runtime still is not.
+        (["KERNEL32.dll", "MSVCP140.dll"], [], True),
+        (["KERNEL32.dll", "VCRUNTIME140_1.dll"], [], True),
     ]
     with tempfile.TemporaryDirectory() as td:
         # Both layouts must parse, and produce identical verdicts.
@@ -383,11 +400,21 @@ def main(argv: list[str]) -> int:
         print(f"pe_deps: {path} imports no DLLs at all (suspicious)", file=sys.stderr)
         return 1
 
+    def tag_of(n):
+        if UCRT.match(n):
+            return "ucrt: OS component, Windows 10+"
+        if n.lower().split(".")[0] in SYSTEM_HINT:
+            return "system"
+        return "REVIEW"
+
     for n in sorted(imp):
-        tag = "system" if n.lower().split(".")[0] in SYSTEM_HINT else "REVIEW"
-        print(f"  IMPORT  {n}  [{tag}]")
+        print(f"  IMPORT  {n}  [{tag_of(n)}]")
     for n in sorted(delay):
-        print(f"  DELAY   {n}  [REVIEW]")
+        print(f"  DELAY   {n}  [{tag_of(n)}]")
+    ucrt = sorted(n for n in set(imp) | set(delay) if UCRT.match(n))
+    if ucrt:
+        print(f"note: {len(ucrt)} Universal CRT API-set import(s); these are "
+              f"forwarders for ucrtbase.dll and ship with Windows 10 and later.")
 
     bad = [n for n in sorted(set(imp) | set(delay)) if FORBIDDEN.match(n)]
     if bad:

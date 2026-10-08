@@ -70,8 +70,10 @@ Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
 | **37796725517** | release | v0.1.0-rc | **e1d027d** | **failure** | web ✅ macOS ✅ shader-assets ✅; **Windows** `dumpbin` exit 157; **Linux** AppImage smoke exit 1 (no annotation) |
 | **37801626654** | ci | branch | **bae34a6** | **success** | all 8 jobs green |
 | **37801753643** | release | v0.1.0-rc | **bae34a6** | **failure** | shader-assets ✅ web ✅ macOS ✅ **Linux ✅ (fixed!)**; Windows ❌ at the new PE audit step |
-| next | ci | branch | (round-5 fix) | pending | revalidation after the round-5 parser fix |
-| next | release | v0.1.0-rc | (round-5 fix) | pending | confirming dry run |
+| **37805442982** | ci | branch | **f8bd485** | **success** | all 8 jobs green |
+| **37805433751** | release | v0.1.0-rc | **f8bd485** | **failure** | shader-assets ✅ web ✅ macOS ✅ Linux ✅; Windows ❌ — audit ran correctly, flagged 13 `api-ms-win-crt-*` imports |
+| next | ci | branch | (round-6 fix) | pending | revalidation after the UCRT allow-list |
+| next | release | v0.1.0-rc | (round-6 fix) | pending | confirming dry run |
 
 **Round-4 fix (commit `HEAD~`-successor), both root-caused:**
 
@@ -128,11 +130,19 @@ Both runs must be green before asking for merge approval.
   an opaque MSYS status (157). `scripts/pe_deps.py` now decides pass/fail from the PE import
   table; `dumpbin` output is still collected as evidence. Flagged here because it is a deviation
   in *tooling* (not in coverage) from the literal wording of PROMPT §9.6.
-  **Note (round 5):** the first version of `pe_deps.py` had the optional-header offsets wrong by
+  **Round 5:** the first version had the optional-header offsets wrong by
   4 bytes in both layouts and reported a healthy executable as importing nothing. Fixed; the
   offsets are now pinned by a format-level assertion (`96 + 16*8 == 224`, `112 + 16*8 == 240`)
-  and the self-test covers PE32 *and* PE32+ plus three negative cases (13/13 check). The audit
-  also now hard-fails if the artifact is not x86-64. Recorded as DESIGN_LOG #18.
+  and the self-test covers PE32 *and* PE32+ plus three negative cases. The audit also hard-fails
+  if the artifact is not x86-64. Recorded as DESIGN_LOG #18.
+  **Round 6 (resolved):** with the offsets fixed, the runner reported the truth — the artifact is
+  a genuine **PE32+ x86-64** image from `x86_64-w64-mingw32`, importing **only OS DLLs**
+  (ADVAPI32, GDI32, IMM32, KERNEL32, OLEAUT32, SETUPAPI, SHELL32, USER32, VERSION, WINMM, ole32)
+  plus the 13 `api-ms-win-crt-*` **Universal CRT** API sets. No SDL, bgfx, MinGW-runtime or
+  Visual C++ redistributable — the `-static` linking works. The UCRT API sets are forwarders for
+  `ucrtbase.dll`, an OS component from Windows 10 onwards, so they are now allowed but reported,
+  and **Windows 10 or later is disclosed as the floor** for the Windows artifact in the README
+  and release notes. Recorded as DESIGN_LOG #19.
 * **GitHub Pages cannot be enabled by me.** `gh api -X POST repos/coderunknow/AAA/pages`
   → **403 "Resource not accessible by integration"** (token lacks admin). Owner action.
   Without Pages, the "web build on a static host" acceptance criterion is **not** satisfied
@@ -172,16 +182,13 @@ Privacy & Security → Open Anyway.
 3. Confirm the round-4 **release dry run** is green for **all 5 build jobs**
    (shader-assets, web, windows, linux, macos); checksums/publish are expected
    to *skip* on an rc tag.
-   Watch specifically for Windows `Dependency audit (PE import table)`. If it fails, the
-   annotation carries the toolchain (`gcc -dumpmachine`), the image's machine type and the full
-   import list. Two known possible outcomes:
-   * `machine is i386 (32-bit)` — the runner's MinGW is 32-bit. Real defect against PROMPT 2
-     (Windows x64); fix by pinning an x86_64 toolchain in the release workflow.
-   * a named forbidden DLL (e.g. `libwinpthread-1.dll`) — `-static` did not cover it; add the
-     missing linker flag.
+   Windows `Dependency audit (PE import table)` is the only step that has ever failed in the
+   last three dry runs, and each failure has been the audit itself, not the artifact. The
+   annotation carries the toolchain (`gcc -dumpmachine`), the machine type and the full import
+   list, so any further failure is self-explaining.
 
    Linux `Packaged smoke test (AppImage payload)` and `Render verification (xvfb + llvmpipe)`
-   both **passed** in `37801753643` and are no longer open risks.
+   both **passed** in `37801753643` and `37805433751`, as did shader-assets, web and macOS.
 4. If either fails: read annotations
    (`gh api repos/coderunknow/AAA/check-runs/<job-id>/annotations`), fix, commit,
    force-push `v0.1.0-rc`, repeat.

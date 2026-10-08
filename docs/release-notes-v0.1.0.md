@@ -22,7 +22,7 @@ No commercial signing certificate is involved, and the macOS build has **not** b
 |---|---|---|
 | `mistpine-v0.1.0-web.zip` | any static web host | Upload the four files and open `index.html`. |
 | `mistpine-v0.1.0-web-singlefile.html` | Chrome | Double-click it, or open it over `file://`. One self-contained HTML — no server needed. |
-| `mistpine-v0.1.0-windows-x64.zip` | Windows x64 | Unzip, then run `Mistpine.exe`. |
+| `mistpine-v0.1.0-windows-x64.zip` | Windows x64 (Windows 10 or later) | Unzip, then run `Mistpine.exe`. |
 | `mistpine-v0.1.0-linux-x86_64.AppImage` | Linux x86_64 | `chmod +x …AppImage`, then run it. |
 | `mistpine-v0.1.0-linux-x86_64.tar.gz` | Linux x86_64 | `tar xzf …tar.gz`, then run `mistpine`. |
 | `mistpine-v0.1.0-macos-arm64.zip` | macOS (Apple silicon) | Unzip, then open `Mistpine.app`. |
@@ -66,6 +66,16 @@ No commercial signing certificate is involved, and the macOS build has **not** b
 
 `WASD` move · `Shift` run · `Ctrl` crouch · `Space` jump · `E` interact / forage · `F` craft ·
 `Tab` inventory · `Esc` pause · mouse look.
+
+## Platform notes
+
+- **Windows:** the artifact is a genuine 64-bit image and carries **no toolchain runtime DLLs** —
+  no SDL, no bgfx, no MinGW runtime, no Visual C++ redistributable. It does import the Windows
+  Universal CRT (`api-ms-win-crt-*`), which is an operating-system component from **Windows 10**
+  onwards, so Windows 10 or later is the floor. Every build asserts this by reading the
+  executable's import table (`scripts/pe_deps.py`).
+- **Linux:** the AppImage and the `.tar.gz` both find their assets from any working directory.
+- **macOS:** arm64 (Apple silicon) only for this release.
 
 ## Verification
 
