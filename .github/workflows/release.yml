@@ -155,7 +155,9 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Host tools (shaderc, MSVC — also emits the dx11 shader profile)
         run: |
-          cmake --preset tools
+          # Static CRT: the tool must run anywhere on the runner without hunting for
+          # vcruntime/msvcp DLLs (a missing/mismatched CRT DLL crashes it at startup).
+          cmake --preset tools -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build --preset tools --target shaderc
       - name: Configure native-release
         run: |

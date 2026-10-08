@@ -6,8 +6,10 @@
 # raw job log cannot be downloaded.
 #
 # Strategy: extract the lines that look like errors (with a little context),
-# because dependency configure logs are dominated by thousands of routine
-# "Looking for …" probe lines. Falls back to the raw tail when nothing matches.
+# because dependency configure/build logs are dominated by thousands of
+# routine probe lines; then append the raw tail so successful steps stay
+# visible next to the failures. Falls back to the raw tail when nothing
+# matches.
 #
 # Usage: scripts/ci_annotate_failure.sh <logfile> <title>
 # -----------------------------------------------------------------------------
@@ -47,12 +49,16 @@ for i, line in enumerate(lines):
         ctx = 0  # avoid re-printing context for consecutive matches
 
 if not out:
-    out = [f"(no error-looking lines; raw tail follows)"] + lines[-40:]
+    out = ["(no error-looking lines; raw tail follows)"]
+
+out.append("")
+out.append(f"(raw tail, last {min(60, len(lines))} of {len(lines)} lines)")
+out.extend(lines[-60:])
 
 text = "\n".join(out).strip()
 # Keep the annotation within GitHub's per-annotation size budget.
-if len(text) > 8500:
-    text = text[-8500:]
+if len(text) > 20000:
+    text = text[-20000:]
 # Workflow-command escaping: % -> %25, CR -> %0D, LF -> %0A.
 text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 print(f"::error::{title} — log summary:%0A{text}")

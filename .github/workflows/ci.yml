@@ -159,12 +159,12 @@ jobs:
         run: |
           cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-default \
             --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/playtest.log 2>&1 ||
-            { tail -c 8000 /tmp/playtest.log; exit 1; }
+            { scripts/ci_annotate_failure.sh /tmp/playtest.log "browser playtest (default) failed"; exit 1; }
       - name: "Playtest (persist script: save round trip)"
         run: |
           cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-persist \
             --query "hours=9&quality=low" --script persist --width 960 --height 540 > /tmp/playtest2.log 2>&1 ||
-            { tail -c 8000 /tmp/playtest2.log; exit 1; }
+            { scripts/ci_annotate_failure.sh /tmp/playtest2.log "browser playtest (persist) failed"; exit 1; }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -226,10 +226,37 @@ jobs:
       - uses: actions/checkout@v4
       # The pinned Linux shaderc cannot emit SM 5.0 (no D3DCompiler support), so the
       # dx11 profile is compiled with a shaderc built on Windows (PROMPT §8.1).
-      - name: Build shaderc (MSVC)
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc.exe
+          key: shaderc-win-${{ hashFiles('cmake/Dependencies.cmake') }}
+      - name: Build shaderc (MSVC, static CRT)
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          cmake --preset tools
+          # Static CRT: the tool must run anywhere on the runner without hunting for
+          # vcruntime/msvcp DLLs (a missing/mismatched CRT DLL crashes it at startup).
+          cmake --preset tools -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build --preset tools --target shaderc
+      - name: Smoke-test the Windows shaderc (spirv + dx11)
+        run: |
+          SHADERC="build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc.exe"
+          BGXSRC="build/tools/_deps/bgfx_cmake-src/bgfx/src"
+          ls -la "$(dirname "$SHADERC")" > /tmp/smoke.log 2>&1
+          DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe 2>/dev/null | tail -1)
+          if [ -n "$DUMPBIN" ]; then "$DUMPBIN" /dependents "$SHADERC" >> /tmp/smoke.log 2>&1 || true; fi
+          mkdir -p /tmp/smoke
+          "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.spirv.bin --type vertex --platform linux -p spirv \
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1
+          echo "spirv exit: $?" >> /tmp/smoke.log
+          "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.dx11.bin --type vertex --platform windows -p s_5_0 \
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> /tmp/smoke.log 2>&1
+          echo "dx11 exit: $?" >> /tmp/smoke.log
+          cat /tmp/smoke.log
+          if ! grep -q "spirv exit: 0" /tmp/smoke.log || ! grep -q "dx11 exit: 0" /tmp/smoke.log; then
+            scripts/ci_annotate_failure.sh /tmp/smoke.log "windows shaderc smoke test failed"
+            exit 1
+          fi
       - name: Compile the Windows profile set (dx11, spirv, glsl)
         run: |
           cmake --preset native-dev -DAAA_BUILD_TESTS=OFF -DAAA_SHADER_PROFILE_SET=windows > /tmp/cfg.log 2>&1 ||
