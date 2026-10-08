@@ -6,6 +6,8 @@ agent should be able to read this file, `git log`, and `gh run list` and continu
 without re-deriving anything.
 
 Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
+**Status: release gate met — CI green, full release dry run green. Awaiting owner merge approval
+(PROMPT §14.3); nothing has been merged.**
 
 ---
 
@@ -72,8 +74,10 @@ Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
 | **37801753643** | release | v0.1.0-rc | **bae34a6** | **failure** | shader-assets ✅ web ✅ macOS ✅ **Linux ✅ (fixed!)**; Windows ❌ at the new PE audit step |
 | **37805442982** | ci | branch | **f8bd485** | **success** | all 8 jobs green |
 | **37805433751** | release | v0.1.0-rc | **f8bd485** | **failure** | shader-assets ✅ web ✅ macOS ✅ Linux ✅; Windows ❌ — audit ran correctly, flagged 13 `api-ms-win-crt-*` imports |
-| next | ci | branch | (round-6 fix) | pending | revalidation after the UCRT allow-list |
-| next | release | v0.1.0-rc | (round-6 fix) | pending | confirming dry run |
+| **37808662729** | ci | branch | **aa260b9** | **success** | all 8 jobs green |
+| **37808656086** | release | v0.1.0-rc | **aa260b9** | **success** | **FULLY GREEN — all 6 jobs, incl. SHA256SUMS** |
+| next | ci | branch | (design-log commit) | pending | head re-validation |
+| next | release | v0.1.0-rc | (design-log commit) | pending | head re-validation |
 
 **Round-4 fix (commit `HEAD~`-successor), both root-caused:**
 
@@ -92,7 +96,15 @@ Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
   actually executed (the AppImage step always failed first). Now annotated; `render.log`
   uploaded with the QA artifacts.
 
-Both runs must be green before asking for merge approval.
+**Round 6 (`aa260b9`) is the first fully green dry run — see DESIGN_LOG #20 for the full
+per-job breakdown.** Every release step on every platform executed and passed, including the
+Linux llvmpipe render verification and the Windows packaged smoke test that had never run
+before. The SHA256SUMS job asserts exactly six existing, checksum-verified artifacts.
+
+**Review bots are not gates.** `Kilo Code Review` shows `fail` but its comment is a billing
+notice ("account is out of credits"), Qodo is billing-blocked, and CodeRabbit skipped the
+repository. PROMPT §572 explicitly excludes these from correctness evidence. GitHub therefore
+reports `mergeStateStatus: UNSTABLE` while `mergeable` is `MERGEABLE`.
 
 ## 4. What `e1d027d` fixes (root causes of 37790842875)
 
@@ -176,12 +188,11 @@ Privacy & Security → Open Anyway.
 
 ## 8. Immediate next steps (in order)
 
-1. ~~Confirm CI run **37796737715** is green~~ — **done, all 8 jobs success.**
-2. Confirm the round-4 **CI** run is green (the workflow/scripts change is non-functional for
-   CI, but §13 requires the *current PR head* to be green).
-3. Confirm the round-4 **release dry run** is green for **all 5 build jobs**
-   (shader-assets, web, windows, linux, macos); checksums/publish are expected
-   to *skip* on an rc tag.
+1. ~~Get CI green on the PR head~~ — **done, all 8 jobs success (`37808662729`).**
+2. ~~Get the release dry run green~~ — **done, all 6 jobs success (`37808656086`).**
+3. ~~Fix the Windows and Linux release blockers~~ — **done (rounds 4-6).**
+4. Re-validate the head after the final design-log commit (§13: *the current PR head* must be
+   green, and a documentation commit still moves the head).
    Windows `Dependency audit (PE import table)` is the only step that has ever failed in the
    last three dry runs, and each failure has been the audit itself, not the artifact. The
    annotation carries the toolchain (`gcc -dumpmachine`), the machine type and the full import
@@ -189,15 +200,17 @@ Privacy & Security → Open Anyway.
 
    Linux `Packaged smoke test (AppImage payload)` and `Render verification (xvfb + llvmpipe)`
    both **passed** in `37801753643` and `37805433751`, as did shader-assets, web and macOS.
-4. If either fails: read annotations
+5. If either fails: read annotations
    (`gh api repos/coderunknow/AAA/check-runs/<job-id>/annotations`), fix, commit,
    force-push `v0.1.0-rc`, repeat.
-5. Append a DESIGN_LOG entry summarising the verified release state (entry #17 already covers
-   round 4).
-6. **Ask the owner to approve and merge PR #2.** Do not merge.
-7. After merge: `gh release create v0.1.0 --target <merge-sha> --draft` with notes carrying the
-   unsigned-build warnings, then `gh workflow run release.yml -f tag=v0.1.0 -f sha=<merge-sha>`
-   (this works after merge because the workflow will then exist on the default branch).
+6. ~~Append a DESIGN_LOG entry summarising the verified release state~~ — **done (#20).**
+7. **Ask the owner to approve and merge PR #2.** Do not merge. Lead with the residual risks in
+   §6 — above all that GitHub Pages could not be enabled by the agent, so acceptance criterion
+   §1.7 ("the web build works on a static host") is not yet satisfied end-to-end.
+8. After merge: `gh release create v0.1.0 --target <merge-sha> --draft` with notes carrying the
+   unsigned-build warnings (`docs/release-notes-v0.1.0.md`), then
+   `gh workflow run release.yml -f tag=v0.1.0 -f sha=<merge-sha>` (this works after merge
+   because the workflow will then exist on the default branch).
 
 ## 9. Hard-won operational notes (do not re-learn)
 

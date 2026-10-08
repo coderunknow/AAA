@@ -603,3 +603,49 @@ it is disclosed rather than hidden.
 executed. Everything else in `37805433751` was green: shader-assets, web, macOS arm64 and Linux
 (including the AppImage smoke test and the llvmpipe render verification). CI `37805442982` is
 green on all 8 jobs.
+
+### #20 — 2026-10-08 — DONE: release gate met — the full dry run is green on every platform
+
+Release dry run **37808656086** on `aa260b9`, the first fully green dry run of this mission:
+
+| Job | Time | Result |
+|---|---|---|
+| Shader assets (Linux shaderc) | 11m26s | success |
+| Web release + single-file + browser QA | 19m07s | success |
+| Windows x64 package | 21m02s | success |
+| Linux x86_64 package (AppImage + tar.gz) | 17m51s | success |
+| macOS arm64 package (Mistpine.app) | 3m03s | success |
+| SHA256SUMS | 18s | success |
+| Publish draft release v0.1.0 | — | skipped (correct: guarded on the tag being exactly `v0.1.0`) |
+
+CI **37808662729** on the same commit: **all 8 jobs green** (Pages deploy skipped — it is gated
+on the branch being `main`).
+
+**What the green run actually proves, per job:**
+
+* **Windows** — every step ran, including the two that had never executed before: the packaged
+  smoke test from a foreign CWD and the D3D11 render verification. Both dependency audits pass:
+  the PE import audit accepts the image (x86-64, OS DLLs + the UCRT API sets only) and dumpbin
+  produced its supplementary output.
+* **Linux** — packaged smoke tests for **both** the `.tar.gz` and the AppImage payload, the
+  `ldd` audit, and the xvfb + Mesa llvmpipe render verification (first time it has run).
+* **macOS** — `otool` audit, packaged smoke test from a foreign CWD, Metal render verification.
+* **Web** — browser QA over HTTP **and** the single-file HTML launched over `file://`.
+* **SHA256SUMS** — the job asserts that exactly the six required assets exist and that every
+  checksum verifies (`sha256sum -c`), so all six artifacts were produced: web zip, single-file
+  HTML, Windows zip, Linux AppImage, Linux tar.gz, macOS zip.
+
+**Review bots.** The check named `Kilo Code Review` reports `fail`, but its comment is a billing
+notice — *"Kilo Code Review could not run — your account is out of credits"* — not a finding.
+Qodo is billing-blocked too, and CodeRabbit skipped (the repo has fewer than 10 stars) after
+posting only its boilerplate. PROMPT §572 says these may be billing-blocked or skipped and must
+not be treated as authoritative correctness evidence, so none of them is a release gate. GitHub
+still reports `mergeStateStatus: UNSTABLE` because of the Kilo check, while `mergeable` is
+`MERGEABLE`.
+
+**Release gate status (PROMPT §13).** All applicable gates are true: warnings-as-errors, unit
+tests, sanitizers, native smoke tests, all five shader profiles, the web build, the browser
+playtest, the release dry run and every platform's runner-side release check.
+
+**Stopping here.** PROMPT §14.3 requires stopping before the merge and asking the owner for
+explicit approval. No merge has been performed.
