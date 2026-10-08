@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "app/ui.h"
 #include "game/game.h"
 #include "platform/audio_output.h"
 #include "platform/platform.h"
@@ -25,8 +26,6 @@ struct AppOptions {
 };
 
 AppOptions parseOptions(int argc, char** argv);
-// Single source of truth for the version string (CMake project VERSION).
-const char* appVersion();
 
 class App {
  public:
@@ -36,9 +35,9 @@ class App {
   bool event(const SDL_Event& e);
   void shutdown();
   int exitCode() const { return exitCode_; }
-  // Called from the HTML shell (title / pause screens).
-  void resumeFromUi();
-  void startOverFromUi();
+  void resumeFromMenu();      // Begin / Continue (also resumes from pause)
+  void startOverFromMenu();   // "Start a new journey" (two-click confirmed)
+  void applySettings();       // push UI settings into renderer/platform/audio + persist
 
  private:
   enum class Stage { World, Renderer, Playing };
@@ -53,6 +52,7 @@ class App {
   Platform platform_;
   std::unique_ptr<Game> game_;
   Renderer renderer_;
+  Ui ui_;  // in-engine UI: title / pause / settings menus, HUD, prompts, toasts
   Stage stage_ = Stage::World;
   uint64_t lastTicks_ = 0;
   int frames_ = 0;

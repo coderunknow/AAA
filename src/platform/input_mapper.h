@@ -21,6 +21,14 @@ class InputMapper {
   void releaseAll();
   InputSettings& settings() { return settings_; }
   bool usingGamepad() const { return lastWasPad_; }
+  // Absolute mouse position in window coordinates (for in-engine UI hit-testing).
+  Vec2 mousePosition() const { return mousePos_; }
+  // Left-button click edge, latched until consumed.
+  bool takeClick() {
+    const bool c = click_;
+    click_ = false;
+    return c;
+  }
 
  private:
   static float deadzone(float v, float dz);
@@ -28,6 +36,8 @@ class InputMapper {
   SDL_Gamepad* pad_ = nullptr;
   bool keys_[8] = {};  // W A S D Shift Ctrl Space(held) unused
   Vec2 mouse_{};
+  Vec2 mousePos_{};
+  bool click_ = false;
   float wheel_ = 0.0f;
   bool crouch_ = false, jump_ = false, interact_ = false, build_ = false, eat_ = false, debug_ = false, pause_ = false;
   bool lastWasPad_ = false;

@@ -59,7 +59,11 @@ void InputMapper::handleEvent(const SDL_Event& e) {
       if (std::fabs(e.motion.xrel) > 300.0f || std::fabs(e.motion.yrel) > 300.0f) break;
       mouse_.x += e.motion.xrel;
       mouse_.y += e.motion.yrel;
+      mousePos_ = {e.motion.x, e.motion.y};  // absolute, window coordinates
       lastWasPad_ = false;
+      break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+      if (e.button.button == SDL_BUTTON_LEFT) click_ = true;  // latched for the in-engine UI
       break;
     case SDL_EVENT_MOUSE_WHEEL:
       wheel_ += e.wheel.y;

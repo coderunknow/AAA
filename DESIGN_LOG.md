@@ -133,3 +133,43 @@ Verified starting state (re-checked against the live repo, not assumed from PROM
 - Sandbox was recycled: `~/.cache` (toolchain, deps) and `build/` were wiped; toolchain bootstrap re-run (Emscripten 4.0.11 + Binaryen 123 + clang 21 via Zig wheel + cmake/ninja from PyPI). bgfx.cmake @ f2ea8fb and SDL3 @ release-3.4.18 cloned to `~/.cache/aaa-deps`.
 - CI job logs are NOT retrievable from the sandbox (`results-receiver.actions.githubusercontent.com` is network-blocked; artifact hosts too). Job annotations are readable via `gh api .../check-runs/<job-id>/annotations`. Consequence: CI failures must be diagnosed by reproducing locally and/or by making CI jobs annotate their own failures.
 - Local reproduction of the native-windowed configure (stub X11/OpenGL find-packages, SDL windowed): configure proceeds through bgfx (X11/OpenGL stubbed) and reaches SDL3's summary, where SDL3 `FATAL_ERROR`s because this sandbox has no X11/Wayland dev libraries (`SDL could not find X11 or Wayland development libraries`). The CI runner DOES install libx11-dev/libxext-dev/…, so the exact runner failure is still unconfirmed — first release task is to make the CI job annotate its own configure output (see M1) and get the real error.
+
+### #11 — 2026-10-08 — DONE: M1 stability + cross-platform (part 1: native build fix, rendering, UI)
+Verified locally (2 cores, no GPU; native-headless build + web-release + headless Chromium/SwiftShader):
+- **Native windowed CI failure root-caused and fixed.** The Arena sandbox cannot download CI job
+  logs (results-receiver host blocked), so the failure was reproduced locally and diagnosed via a
+  self-annotating CI step (scripts/ci_annotate_failure.sh prints extracted error lines as a GitHub
+  error annotation). Root cause: SDL3 `FATAL_ERROR`s at configure when X11 dev packages are missing;
+  the job lacked libxtst-dev/libxfixes-dev/libxrender-dev (SDL_X11_XTEST/XFIXES/XRENDER are on by
+  default). Fixed in ci.yml; PR CI run 37735730814 is green (tools, unit+smoke, native-windowed,
+  web all pass).
+- Renderer: deterministic single-threaded bgfx (`bgfx::renderFrame()` before init); backend
+  selection with the platform preference chain (Win D3D11→Vulkan→OpenGL, macOS Metal, Linux
+  OpenGL→Vulkan, web GLES) + `--renderer` override; the selected backend is logged. Shader
+  profiles map every bgfx backend explicitly (glsl/spirv/essl/dx11/metal) and a missing profile
+  fails clearly (no silent essl fallback). Verified: the pinned Linux shaderc CANNOT emit dx11
+  ("HLSL compiler support through D3D4Linux is not compiled in") — metal/glsl/spirv/essl all
+  compile from Linux; dx11 is compiled by a Windows shaderc in CI (shader-profiles-windows job).
+- Portable assets: no compile-time AAA_ASSET_DIR; assets are discovered relative to the
+  executable (exe/../assets walk-up + macOS Contents/Resources/assets), `--assets` override kept.
+  Tested: `mistpine --headless --frames 30` launched from /tmp finds build/native-headless/assets.
+- Timing: fixed-step 60 Hz simulation with render interpolation (camera view(alpha), character
+  root rebasing via Mat4::inverseRigid, wolf prev pos/yaw) and a 0.25 s hitch clamp.
+  Pause-on-focus-loss preserved.
+- Save format v4: + masterVolume/fullscreen (v3 migrates with defaults); corrupt-save fuzz test
+  (4000 deterministic mutations: defined result, no crash, output untouched on failure).
+- In-engine UI (web + native share it): SDF font atlas from Source Serif 4 Regular+Italic
+  (SIL OFL-1.1, in assets/fonts/ with the license; stb_truetype from the pinned bgfx, MIT/public
+  domain). Title/pause/settings menus, quiet-fading vitals HUD, clock, inventory, prompts,
+  italic toasts, two-click "Start a new journey" (in-place restart via Game::restartJourney).
+  Settings (quality, master volume, mouse sensitivity, invert Y, fullscreen-native) persist in
+  the save. The DOM now keeps only loading + fatal-error/WebGL2 messaging; the browser harness
+  reads `window.__mistpineState` (menu/phase/vitals/noLock rects). Pointer lock on web is
+  requested from the canvas click gesture via the noLock rects (thin platform glue).
+- `--version` prints "Mistpine 0.1.0" (CMake project VERSION is the single source of truth).
+- CI hardening: -Werror (GCC/Clang/em++) + /WX (MSVC) for first-party targets; ASan+UBSan job;
+  shader-profiles job (host-all: essl/glsl/spirv/metal) + shader-profiles-windows job (dx11).
+- Tests: 54/54 unit tests pass (9 new UI tests), CTest 4/4 (unit + 3 smoke runs).
+- NOT yet verified: the in-engine UI's pixels in the browser (first playtest showed the world
+  without the veil — the UiRenderer init call had been lost to an edit race; fixed, rebuild in
+  progress). Native windowed RENDERING (no GL in the sandbox; CI compiles it only).

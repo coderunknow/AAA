@@ -8,6 +8,7 @@
 #include <filesystem>
 
 #include "core/log.h"
+#include "core/version.h"
 #include "game/save_game.h"
 #include "platform/web_bridge.h"
 
@@ -18,7 +19,6 @@
 namespace aaa {
 namespace {
 constexpr const char* kSaveKey = "mistpine-save";
-App* gApp = nullptr;  // for the HTML shell callbacks below
 
 double nowMs() {
   using namespace std::chrono;
@@ -42,14 +42,6 @@ QualityPreset parseQuality(const char* v) {
   return QualityPreset::High;
 }
 }  // namespace
-
-const char* appVersion() {
-#ifdef AAA_VERSION_STRING
-  return AAA_VERSION_STRING;
-#else
-  return "0.1.0";
-#endif
-}
 
 AppOptions parseOptions(int argc, char** argv) {
   AppOptions o;
@@ -165,8 +157,13 @@ bool App::init(const AppOptions& opts) {
     return false;
   }
   renderer_.setDebugOverlay(opts.debugOverlay);
+  ui_.setRenderer(&renderer_.ui());
+#if defined(__EMSCRIPTEN__)
+  ui_.setNative(false);
+#else
+  ui_.setNative(true);
+#endif
   game_ = std::make_unique<Game>();
-  gApp = this;
   // Headless smoke runs never touch the user's real save.
   storage_ = opts.headless ? static_cast<KeyValueStorage*>(&memoryStorage_) : &platformStorage();
   if (opts.newGame) storage_->remove(kSaveKey);
@@ -177,6 +174,16 @@ bool App::init(const AppOptions& opts) {
     if (r == SaveLoadResult::Ok || r == SaveLoadResult::Migrated) {
       game_->setPendingSave(d);
       hasSave_ = true;
+      // Persisted settings apply immediately (quality, input, volume, fullscreen).
+      const QualityPreset q = static_cast<QualityPreset>(std::clamp(d.quality, 0, 2));
+      renderer_.setQuality(q);
+      platform_.inputSettings().mouseSensitivity = d.mouseSensitivity;
+      platform_.inputSettings().invertY = d.invertY;
+      audio_.setMasterVolume(d.masterVolume);
+      ui_.setSettings(d.quality, d.masterVolume, d.mouseSensitivity, d.invertY, d.fullscreen);
+#if !defined(__EMSCRIPTEN__)
+      if (d.fullscreen) platform_.setFullscreen(true);
+#endif
     }
   }
   if (opts.startHours >= 0.0f) game_->timeOfDay().setHours(opts.startHours);
@@ -187,11 +194,17 @@ bool App::init(const AppOptions& opts) {
 }
 
 void App::reportLoading() {
+  float frac = 0.0f;
+  const char* stage = "Starting";
   if (stage_ == Stage::World) {
-    web::reportLoading(game_->loadStage(), 0.55f * game_->loadProgress());
+    stage = game_->loadStage();
+    frac = 0.55f * game_->loadProgress();
   } else if (stage_ == Stage::Renderer) {
-    web::reportLoading(renderer_.loadStage(), 0.55f + 0.45f * renderer_.loadProgress());
+    stage = renderer_.loadStage();
+    frac = 0.55f + 0.45f * renderer_.loadProgress();
   }
+  ui_.setLoading(stage, frac);
+  web::reportLoading(stage, frac);
 }
 
 bool App::event(const SDL_Event& e) {
@@ -228,9 +241,15 @@ bool App::iterate() {
         if (!opts_.qaScenario.empty() && !game_->applyScenario(opts_.qaScenario))
           AAA_LOG_WARN("unknown qa scenario '%s'", opts_.qaScenario.c_str());
         if (!opts_.headless) {
-          // Title / continue screen; the first click starts (and unlocks audio + pointer lock).
+          // Title / continue screen (in-engine UI); the first click starts the journey.
           game_->setPaused(true);
-          web::reportStart(hasSave_);
+          ui_.setMenu(Ui::Menu::Title);
+          ui_.setHasSave(hasSave_);
+          ui_.setStarted(false);
+        } else {
+          // Headless smoke runs play straight through (no menus).
+          ui_.setMenu(Ui::Menu::Playing);
+          ui_.setStarted(true);
         }
       }
       reportLoading();
@@ -240,20 +259,39 @@ bool App::iterate() {
       break;
   }
 
+  // In-engine UI frame: size, mouse state, logic, then draw into the renderer's UI layer.
+  ui_.beginFrame(renderer_.backbufferWidth(), renderer_.backbufferHeight());
+  UiMouse um;
+  um.pos = platform_.mousePositionPixels();
+  um.click = platform_.takeMouseClick();
+
   // The diagnostics overlay is a development tool: only available with ?debug=1 / --debug.
   if (input.toggleDebug && opts_.debugOverlay) renderer_.setDebugOverlay(!renderer_.debugOverlay());
   if (input.pause) {
-    const bool pause = game_->phase() != GamePhase::Paused;
-    game_->setPaused(pause);
-    platform_.setPointerLock(!pause);
-    web::reportPause(pause);
-    if (pause) saveNow("pause");
+    // Esc is menu-aware: Settings -> back to Pause, Pause -> resume, Playing -> pause.
+    switch (ui_.menu()) {
+      case Ui::Menu::Settings:
+        ui_.setMenu(Ui::Menu::Pause);
+        break;
+      case Ui::Menu::Pause:
+        resumeFromMenu();
+        break;
+      case Ui::Menu::Title:
+      case Ui::Menu::Loading:
+        break;  // Esc does nothing on the title / loading screens
+      case Ui::Menu::Playing:
+        game_->setPaused(true);
+        platform_.setPointerLock(false);
+        ui_.setMenu(Ui::Menu::Pause);
+        saveNow("pause");
+        break;
+    }
   }
   // Losing pointer lock (browser Esc) pauses the game, like most browser games.
   if (!opts_.headless && game_->phase() == GamePhase::Playing && !platform_.pointerLocked() && frames_ > 30 &&
       !platform_.focused()) {
     game_->setPaused(true);
-    web::reportPause(true);
+    ui_.setMenu(Ui::Menu::Pause);
     saveNow("focus lost");
   }
   // Fixed-step simulation at 60 Hz with render interpolation (PROMPT §8.6).
@@ -282,6 +320,15 @@ bool App::iterate() {
     autosaveTimer_ += dt;
     if (autosaveTimer_ > 45.0) saveNow("autosave");
   }
+  // UI logic (menu transitions, hit-testing, settings changes).
+  UiActions actions;
+  ui_.update(dt, *game_, um, actions);
+  if (actions.startOrResume) resumeFromMenu();
+  if (actions.startOver) startOverFromMenu();
+  if (actions.settingsChanged) applySettings();
+  // Draw the UI into the renderer's UI layer, then render (scene + UI + debug).
+  renderer_.ui().begin();
+  ui_.draw(*game_);
   renderer_.render(*game_, dt, interpAlpha_);
   ++frames_;
   // Milestone log (also lets automated browser QA confirm frames are being presented).
@@ -305,21 +352,40 @@ void App::saveNow(const char* reason) {
   // the player once and keep running — never falsely claim the save worked (PROMPT §8.7).
   if (!ok && !saveFailedNotified_) {
     saveFailedNotified_ = true;
-    web::notify("Your progress could not be saved (storage unavailable or full). The game keeps running, but progress will be lost when you leave.");
+    ui_.notify("Your progress could not be saved (storage unavailable or full). The game keeps running, but progress will be lost when you leave.");
   }
 }
 
-void App::resumeFromUi() {
-  if (stage_ != Stage::Playing || game_->phase() != GamePhase::Paused) return;
+void App::resumeFromMenu() {
+  if (stage_ != Stage::Playing) return;
   game_->setPaused(false);
-  platform_.setPointerLock(true);  // inside the click handler: allowed by the browser
-  web::reportPause(false);
+  ui_.setMenu(Ui::Menu::Playing);
+  ui_.setStarted(true);
+  // Pointer lock: on the web the shell also requests it from the click gesture; SDL's
+  // relative mode stays armed so the next click re-locks if the browser deferred it.
+  platform_.setPointerLock(true);
 }
 
-void App::startOverFromUi() {
+void App::startOverFromMenu() {
   storage_->remove(kSaveKey);
   hasSave_ = false;
-  AAA_LOG_INFO("save cleared by the player");
+  ui_.setHasSave(false);
+  game_->restartJourney();
+  ui_.setMenu(Ui::Menu::Playing);
+  ui_.setStarted(true);
+  platform_.setPointerLock(true);
+  AAA_LOG_INFO("save cleared by the player (new journey)");
+}
+
+void App::applySettings() {
+  renderer_.setQuality(static_cast<QualityPreset>(std::clamp(ui_.quality(), 0, 2)));
+  platform_.inputSettings().mouseSensitivity = ui_.sensitivity();
+  platform_.inputSettings().invertY = ui_.invertY();
+  audio_.setMasterVolume(ui_.volume());
+#if !defined(__EMSCRIPTEN__)
+  platform_.setFullscreen(ui_.fullscreen());
+#endif
+  saveNow("settings");
 }
 
 void App::handleEvents() {
@@ -341,21 +407,21 @@ void App::handleEvents() {
     const float dist = length(e.pos - player);
     const float pan = panOf(e.pos);
     switch (e.type) {
-      case GameEvent::Notify: web::notify(e.text.c_str()); break;
+      case GameEvent::Notify: ui_.notify(e.text.c_str()); break;
       case GameEvent::Footstep: {
         const float g = 0.18f + 0.035f * game_->player().horizontalSpeed();
         audio_.play(e.value > 1.5f ? Sfx::StepStone : (e.value > 0.5f ? Sfx::StepWater : Sfx::StepEarth), g, pan * 0.3f);
         break;
       }
       case GameEvent::Land: audio_.play(Sfx::Land, std::min(1.0f, e.value / 10.0f), 0.0f); break;
-      case GameEvent::Pickup: audio_.play(Sfx::Pickup, 0.6f, pan); web::notify(e.text.c_str()); break;
-      case GameEvent::Eat: audio_.play(Sfx::Eat, 0.6f, 0.0f); web::notify(e.text.c_str()); break;
+      case GameEvent::Pickup: audio_.play(Sfx::Pickup, 0.6f, pan); ui_.notify(e.text.c_str()); break;
+      case GameEvent::Eat: audio_.play(Sfx::Eat, 0.6f, 0.0f); ui_.notify(e.text.c_str()); break;
       case GameEvent::Drink: audio_.play(Sfx::Drink, 0.7f, pan); break;
-      case GameEvent::FireLit: audio_.play(Sfx::FireLit, 0.8f, pan); web::notify(e.text.c_str()); break;
+      case GameEvent::FireLit: audio_.play(Sfx::FireLit, 0.8f, pan); ui_.notify(e.text.c_str()); break;
       case GameEvent::FireFed: audio_.play(Sfx::FireFed, 0.7f, pan); break;
       case GameEvent::FireOut:
         if (dist < 40.0f) audio_.play(Sfx::FireOut, 0.6f * (1.0f - dist / 40.0f), pan, dist);
-        if (dist < 25.0f) web::notify("The fire has burned down to ash.");
+        if (dist < 25.0f) ui_.notify("The fire has burned down to ash.");
         break;
       case GameEvent::Howl: audio_.play(Sfx::Howl, 0.25f + 0.6f * (1.0f - smoothstep(30.0f, 450.0f, dist)), pan, dist); break;
       case GameEvent::Growl:
@@ -363,20 +429,17 @@ void App::handleEvents() {
         break;
       case GameEvent::Bite:
         audio_.play(Sfx::Bite, 1.0f, pan);
-        web::notify("Teeth in the dark. Get to a fire, or to the shrine.");
+        ui_.notify("Teeth in the dark. Get to a fire, or to the shrine.");
         break;
       case GameEvent::WolfFlee: break;
-      case GameEvent::Rest: audio_.play(Sfx::Bell, 0.7f, 0.0f); web::notify(e.text.c_str()); break;
-      case GameEvent::Collapse: audio_.play(Sfx::Collapse, 0.9f, 0.0f); web::notify(e.text.c_str()); break;
-      case GameEvent::Wake: audio_.play(Sfx::Bell, 0.5f, 0.0f); web::notify(e.text.c_str()); break;
+      case GameEvent::Rest: audio_.play(Sfx::Bell, 0.7f, 0.0f); ui_.notify(e.text.c_str()); break;
+      case GameEvent::Collapse: audio_.play(Sfx::Collapse, 0.9f, 0.0f); ui_.notify(e.text.c_str()); break;
+      case GameEvent::Wake: audio_.play(Sfx::Bell, 0.5f, 0.0f); ui_.notify(e.text.c_str()); break;
       case GameEvent::RequestSave: saveNow("checkpoint"); break;
     }
   }
   game_->events().clear();
-  if (game_->prompt() != lastPrompt_) {
-    lastPrompt_ = game_->prompt();
-    web::reportPrompt(lastPrompt_.c_str());
-  }
+  lastPrompt_ = game_->prompt();  // the in-engine UI reads the prompt straight from the game
 }
 
 void App::updateAudio() {
@@ -409,16 +472,27 @@ void App::updateHud(float dt) {
   const char* phase = h < 5.0f ? "Night" : h < 7.0f ? "Dawn" : h < 11.0f ? "Morning" : h < 14.0f ? "Midday" :
                       h < 17.5f ? "Afternoon" : h < 19.5f ? "Dusk" : "Night";
   const Inventory& inv = g.inventory();
-  char buf[512];
+  // Read-only state snapshot for the automated browser playtest (window.__mistpineState).
+  // `noLock` lists the button rects whose click must not request pointer lock on the web.
+  std::string noLock;
+  for (const auto& r : ui_.noLockRects()) {
+    char rect[80];
+    std::snprintf(rect, sizeof(rect), "%s[%.0f,%.0f,%.0f,%.0f]", noLock.empty() ? "" : ",", r.x, r.y, r.w, r.h);
+    noLock += rect;
+  }
+  char buf[1024];
   std::snprintf(buf, sizeof(buf),
-                "{\"hp\":%.1f,\"warm\":%.1f,\"food\":%.1f,\"water\":%.1f,\"wet\":%.2f,\"temp\":%.0f,"
-                "\"day\":%d,\"phase\":\"%s\",\"clock\":\"%02d:%02d\",\"inv\":[%d,%d,%d,%d],\"heat\":%.2f,"
-                "\"threat\":%.2f}",
-                v.health, v.warmth, v.satiety, v.hydration, v.wetness, g.survival().feltTemperature(), g.day(), phase,
-                static_cast<int>(h), static_cast<int>(std::fmod(h, 1.0f) * 60.0f), inv.get(ItemKind::Branch),
-                inv.get(ItemKind::Flint), inv.get(ItemKind::Berries), inv.get(ItemKind::Mushroom), g.fireHeat(),
-                g.wildlife().threat());
-  web::reportHud(buf);
+                "{\"version\":\"%s\",\"menu\":\"%s\",\"phase\":\"%s\",\"started\":%d,\"hasSave\":%d,"
+                "\"hp\":%.1f,\"warm\":%.1f,\"food\":%.1f,\"water\":%.1f,\"wet\":%.2f,\"temp\":%.0f,"
+                "\"day\":%d,\"clock\":\"%02d:%02d\",\"phaseName\":\"%s\",\"inv\":[%d,%d,%d,%d],\"heat\":%.2f,"
+                "\"threat\":%.2f,\"noLock\":[%s]}",
+                appVersion(), ui_.menuName(),
+                g.phase() == GamePhase::Paused ? "paused" : g.phase() == GamePhase::Playing ? "playing" : "loading",
+                ui_.started() ? 1 : 0, hasSave_ ? 1 : 0, v.health, v.warmth, v.satiety, v.hydration, v.wetness,
+                g.survival().feltTemperature(), g.day(), static_cast<int>(h), static_cast<int>(std::fmod(h, 1.0f) * 60.0f),
+                phase, inv.get(ItemKind::Branch), inv.get(ItemKind::Flint), inv.get(ItemKind::Berries),
+                inv.get(ItemKind::Mushroom), g.fireHeat(), g.wildlife().threat(), noLock.c_str());
+  web::reportState(buf);
 }
 
 void App::shutdown() {
@@ -430,15 +504,3 @@ void App::shutdown() {
 }
 
 }  // namespace aaa
-
-// --- HTML shell callbacks (title / pause screens) -----------------------------------------------
-#if defined(__EMSCRIPTEN__)
-extern "C" {
-EMSCRIPTEN_KEEPALIVE void aaa_resume() {
-  if (aaa::gApp) aaa::gApp->resumeFromUi();
-}
-EMSCRIPTEN_KEEPALIVE void aaa_start_over() {
-  if (aaa::gApp) aaa::gApp->startOverFromUi();
-}
-}
-#endif

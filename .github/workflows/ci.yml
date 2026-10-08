@@ -135,3 +135,70 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  sanitizers:
+    name: Sanitizers (ASan + UBSan: unit tests + smoke runs)
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/download-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
+      - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+      - name: Configure (ASan + UBSan)
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SANITIZERS=ON > /tmp/cfg.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/cfg.log "sanitizers configure failed"; exit 1; }
+      - name: Build
+        run: |
+          cmake --build --preset native-headless > /tmp/build.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/build.log "sanitizers build failed"; exit 1; }
+      - name: Test
+        run: |
+          ctest --preset native-headless > /tmp/ctest.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/ctest.log "sanitizers ctest failed"; exit 1; }
+
+  shader-profiles:
+    name: Shader profiles (essl, glsl, spirv, metal)
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/download-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
+      - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+      - name: Compile every profile the Linux shaderc can emit
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SHADER_PROFILE_SET=host-all > /tmp/cfg.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/cfg.log "shader-profiles configure failed"; exit 1; }
+          cmake --build --preset native-headless --target aaa_shaders > /tmp/build.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/build.log "shader compilation failed"; exit 1; }
+          ls build/native-headless/assets/shaders/
+
+  shader-profiles-windows:
+    name: Shader profiles (dx11 on a Windows shaderc)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      # The pinned Linux shaderc cannot emit SM 5.0 (no D3DCompiler support), so the
+      # dx11 profile is compiled with a shaderc built on Windows (PROMPT §8.1).
+      - name: Build shaderc (MSVC)
+        run: |
+          cmake --preset tools
+          cmake --build --preset tools --target shaderc
+      - name: Compile the Windows profile set (dx11, spirv, glsl)
+        run: |
+          cmake --preset native-dev -DAAA_BUILD_TESTS=OFF -DAAA_SHADER_PROFILE_SET=windows > /tmp/cfg.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/cfg.log "windows shader-profiles configure failed"; exit 1; }
+          cmake --build --preset native-dev --target aaa_shaders > /tmp/build.log 2>&1 ||
+            { scripts/ci_annotate_failure.sh /tmp/build.log "windows shader compilation failed"; exit 1; }
+          ls build/native-dev/assets/shaders/

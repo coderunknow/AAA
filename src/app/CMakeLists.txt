@@ -1,5 +1,11 @@
+# The in-engine UI (menus, HUD, prompts, toasts) is its own library so unit tests can
+# exercise its logic without the app executable.
+add_library(aaa_ui STATIC ui.cpp)
+target_link_libraries(aaa_ui PUBLIC aaa_game aaa_render)
+aaa_target_defaults(aaa_ui)
+
 add_executable(mistpine main.cpp app.cpp)
-target_link_libraries(mistpine PRIVATE aaa_render aaa_platform)
+target_link_libraries(mistpine PRIVATE aaa_ui aaa_render aaa_platform)
 aaa_target_defaults(mistpine)
 add_dependencies(mistpine aaa_shaders)
 
@@ -13,7 +19,7 @@ if(EMSCRIPTEN)
     "-sMAX_WEBGL_VERSION=2" "-sMIN_WEBGL_VERSION=2"
     "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=256MB" "-sSTACK_SIZE=1MB"
     "-sENVIRONMENT=web" "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8']"
-    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_aaa_resume','_aaa_start_over']")
+    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']")
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     # (No -gsource-map: needs llvm-dwarfdump, absent from the sandbox LLVM; DWARF from -g is kept.)
     target_link_options(mistpine PRIVATE "-sASSERTIONS=1")

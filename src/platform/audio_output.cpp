@@ -52,14 +52,16 @@ void AudioOutput::callback(void* user, SDL_AudioStream* stream, int additional, 
 void AudioOutput::setLevels(const audio::AmbienceLevels& l) {
   if (!stream_) return;
   SDL_LockAudioStream(stream_);
-  synth_->setLevels(l);
+  audio::AmbienceLevels scaled = l;
+  scaled.master = l.master * master_;
+  synth_->setLevels(scaled);
   SDL_UnlockAudioStream(stream_);
 }
 
 void AudioOutput::play(audio::Sfx sfx, float gain, float pan, float distance) {
   if (!stream_) return;
   SDL_LockAudioStream(stream_);
-  synth_->play(sfx, gain, pan, distance);
+  synth_->play(sfx, gain * master_, pan, distance);
   SDL_UnlockAudioStream(stream_);
 }
 

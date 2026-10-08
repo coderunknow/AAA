@@ -89,9 +89,12 @@ try {
   summary.readySeconds = (Date.now() - t0) / 1000;
   await sleep(2500);  // let the overlay fade and streaming settle
   await shot('00-title');
+  summary.titleMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
   await page.click('#canvas').catch(() => {});
   await sleep(1500);  // menu veil fades, HUD fades in
   if (script === 'default') {
+    summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    if (summary.playingMenu !== 'playing') throw new Error('expected playing after the title click, got: ' + summary.playingMenu);
     await shot('01-spawn');
     summary.rafFpsIdle = await measureFps(3000);
     await look(-260, 0);
@@ -113,18 +116,25 @@ try {
     await press('Escape');
     await sleep(2500);
     await shot('01-paused');
+    summary.pausedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
     const save = await page.evaluate(() => localStorage.getItem('mistpine-save'));
     summary.saveBytes = save ? save.length : 0;
     summary.saveHead = save ? save.slice(0, 120) : null;
     if (!save) throw new Error('no save in localStorage after pausing');
+    if (summary.pausedMenu !== 'pause') throw new Error('expected the pause menu, got: ' + summary.pausedMenu);
     await page.goto(summary.url.replace(/[?&]new=1/, (m) => m[0] === '?' ? '?' : ''), { waitUntil: 'load' });  // reload without ?new=1
     await page.waitForFunction(() => window.__mistpineReady === true, { timeout: readyTimeout, polling: 500 });
     await sleep(2500);
-    summary.titleButton = await page.evaluate(() => document.getElementById('begin').textContent);
+    // The in-engine title screen reports itself through window.__mistpineState.
+    const titleState = await page.evaluate(() => window.__mistpineState);
+    summary.titleState = titleState ? { menu: titleState.menu, hasSave: titleState.hasSave, version: titleState.version } : null;
     await shot('02-continue-title');
-    if (summary.titleButton !== 'Continue') throw new Error('title does not offer Continue: ' + summary.titleButton);
-    await page.click('#begin');
+    if (!titleState || titleState.menu !== 'title' || !titleState.hasSave)
+      throw new Error('title state does not offer Continue: ' + JSON.stringify(summary.titleState));
+    await page.click('#canvas');
     await sleep(2500);
+    summary.resumedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    if (summary.resumedMenu !== 'playing') throw new Error('expected playing after continue, got: ' + summary.resumedMenu);
     await shot('03-resumed');
   } else if (script === 'still') {
     await sleep(1500);

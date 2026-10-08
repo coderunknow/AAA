@@ -7,6 +7,7 @@
 
 #include "core/math.h"
 #include "render/atmosphere.h"
+#include "render/ui_renderer.h"
 
 namespace aaa {
 
@@ -78,6 +79,10 @@ class Renderer {
   const RendererInfo& info() const { return info_; }
   const AtmosphereState& atmosphere() const { return atm_; }
   uint32_t frameCount() const { return frame_; }
+  uint32_t backbufferWidth() const { return width_; }
+  uint32_t backbufferHeight() const { return height_; }
+  // In-engine UI layer (menus, HUD, toasts): draw into it between beginFrame and render.
+  UiRenderer& ui() { return ui_; }
 
  private:
   void createTargets();
@@ -105,6 +110,7 @@ class Renderer {
   std::unique_ptr<WaterRenderer> water_;
   std::unique_ptr<ObjectRenderer> objects_;
   std::unique_ptr<FireRenderer> fire_;
+  UiRenderer ui_;
 
   bgfx::FrameBufferHandle hdrFb_ = BGFX_INVALID_HANDLE, shadowFb_ = BGFX_INVALID_HANDLE;
   bgfx::TextureHandle hdrColor_ = BGFX_INVALID_HANDLE, shadowTex_ = BGFX_INVALID_HANDLE;

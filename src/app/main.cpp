@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "app/app.h"
+#include "core/version.h"
 
 SDL_AppResult SDL_AppInit(void** state, int argc, char** argv) {
   const aaa::AppOptions opts = aaa::parseOptions(argc, argv);

@@ -21,7 +21,7 @@
 
 namespace aaa {
 namespace {
-enum : bgfx::ViewId { kViewShadow0 = 0, kViewShadow1 = 1, kViewScene = 2, kViewPost = 3 };
+enum : bgfx::ViewId { kViewShadow0 = 0, kViewShadow1 = 1, kViewScene = 2, kViewPost = 3, kViewUi = 4 };
 constexpr float kNear = 0.15f, kFar = 2400.0f;
 
 bx::Vec3 bv(Vec3 v) { return {v.x, v.y, v.z}; }
@@ -176,6 +176,15 @@ bool Renderer::init(const RendererInit& in) {
     initialised_ = false;
     return false;
   }
+  // The in-engine UI (SDF font atlas + program) initialises up-front so the loading
+  // screen works on native (no DOM) as well as web.
+  if (!ui_.init(*shaders_, in.assetRoot)) {
+    AAA_LOG_ERROR("in-engine UI initialisation failed (fonts under '%s')", in.assetRoot.c_str());
+    shaders_.reset();
+    bgfx::shutdown();
+    initialised_ = false;
+    return false;
+  }
   terrain_ = std::make_unique<TerrainRenderer>();
   props_ = std::make_unique<PropRenderer>();
   character_ = std::make_unique<CharacterRenderer>();
@@ -211,11 +220,13 @@ bool Renderer::init(const RendererInit& in) {
   const float tri[9] = {-1.0f, -1.0f, 0.0f, 3.0f, -1.0f, 0.0f, -1.0f, 3.0f, 0.0f};
   fullscreenVb_ = bgfx::createVertexBuffer(bgfx::copy(tri, sizeof(tri)), terrainVertexLayout());
 
-  for (bgfx::ViewId v = 0; v <= kViewPost; ++v) bgfx::setViewMode(v, bgfx::ViewMode::Sequential);
+  for (bgfx::ViewId v = 0; v <= kViewUi; ++v) bgfx::setViewMode(v, bgfx::ViewMode::Sequential);
   bgfx::setViewName(kViewShadow0, "shadow near");
   bgfx::setViewName(kViewShadow1, "shadow far");
   bgfx::setViewName(kViewScene, "scene");
   bgfx::setViewName(kViewPost, "post");
+  bgfx::setViewName(kViewUi, "ui");
+  ui_.resize(width_, height_);
   createTargets();
   return true;
 }
@@ -228,6 +239,7 @@ void Renderer::shutdown() {
   character_.reset();
   props_.reset();
   terrain_.reset();
+  ui_.shutdown();
   destroyTargets();
   if (bgfx::isValid(fullscreenVb_)) bgfx::destroy(fullscreenVb_);
   for (bgfx::UniformHandle h : {u_.sunDir, u_.sunColor, u_.skyAmbient, u_.groundAmbient, u_.fogColor, u_.fogParams,
@@ -272,6 +284,7 @@ void Renderer::resize(uint32_t w, uint32_t h) {
   if (!initialised_ || w == 0 || h == 0 || (w == width_ && h == height_)) return;
   width_ = w;
   height_ = h;
+  ui_.resize(w, h);
   if (init_.nativeWindow) {
     bgfx::SwapChain sc;
     sc.width = w;
@@ -394,11 +407,12 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   const bool originBL = caps->originBottomLeft;
 
   if (loadStage_ < 3 || !game.world().ready()) {
-    // Still loading: the HTML overlay covers the canvas; just keep presenting frames.
+    // Still loading: present the clear colour plus the in-engine loading screen.
     bgfx::setViewFrameBuffer(kViewPost, BGFX_INVALID_HANDLE);
     bgfx::setViewRect(kViewPost, 0, 0, static_cast<uint16_t>(width_), static_cast<uint16_t>(height_));
     bgfx::setViewClear(kViewPost, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x0b0e10ff, 1.0f, 0);
     bgfx::touch(kViewPost);
+    ui_.submit(kViewUi);  // loading screen (title, progress bar, stage)
     bgfx::setDebug(BGFX_DEBUG_NONE);
     bgfx::frame();
     return;
@@ -556,6 +570,9 @@ void Renderer::render(const Game& game, float realDt, float interpAlpha) {
     if (bgfx::isValid(tonemapProg_)) bgfx::submit(kViewPost, tonemapProg_);
     else bgfx::touch(kViewPost);
   }
+
+  // In-engine UI (menus / HUD / toasts) on top of the tonemapped image.
+  ui_.submit(kViewUi);
 
   drawDebug(game, realDt);
   bgfx::frame();

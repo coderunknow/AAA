@@ -86,6 +86,8 @@ class Game {
   void setPendingSave(const SaveData& d) { pendingSave_ = d; hasPendingSave_ = true; }
   SaveData makeSave() const;
   bool startedFromSave() const { return startedFromSave_; }
+  // "Start a new journey": fresh survival/spawn/forage in the same world (same seed).
+  void restartJourney();
 
   // Visual-QA scenarios (query string ?qa=...): "camp", "shrine", "wolves". Returns false if unknown.
   bool applyScenario(const std::string& name);

@@ -98,6 +98,33 @@ void Game::setPaused(bool p) {
   phase_ = p ? GamePhase::Paused : GamePhase::Playing;
 }
 
+void Game::restartJourney() {
+  // Fresh journey in the same world (the world seed never changes): default survival,
+  // the spawn point, untouched forage, no fires, the original pack, morning of day 1.
+  hasPendingSave_ = false;
+  startedFromSave_ = false;
+  survival_ = Survival{};
+  inventory_ = Inventory{};
+  campfires_.clear();
+  pickups_ = generatePickups(*world_);
+  wildlife_.init(*world_, config_.worldSeed);
+  day_ = 1;
+  playSeconds_ = 0.0;
+  simTime_ = 0.0;
+  time_.setHours(7.4f);
+  time_.paused = false;
+  hasRestPoint_ = false;
+  restPoint_ = world_->shrine().restPoint;
+  hintTimer_ = 0.0f;
+  hintStage_ = 0;
+  transition_ = Transition::None;
+  transitionTime_ = 0.0f;
+  fade_ = 0.0f;
+  prompt_.clear();
+  events_.clear();
+  startPlaying();
+}
+
 void Game::update(float dt, const InputFrame& input, double loadBudgetMs) {
   if (phase_ == GamePhase::LoadingWorld) {
     if (world_->generateStep(loadBudgetMs)) startPlaying();
