@@ -7,8 +7,8 @@ $input v_texcoord0, v_dir
 // rotated per pixel by a hash; the result is a single-channel occlusion term.
 // View space is left-handed: the camera looks down +Z, so larger z = farther.
 SAMPLER2D(s_depth, 0);
-uniform mat4 u_proj;          // scene projection
-uniform mat4 u_invProj;       // its inverse (clip -> view)
+uniform mat4 u_ssaoProj;      // scene projection (NOT bgfx's built-in u_proj)
+uniform mat4 u_ssaoInvProj;   // its inverse (clip -> view)
 uniform vec4 u_screenParams;  // x: 1 if render-target origin is bottom-left
 uniform vec4 u_ssaoParams;    // x: radius (view units), y: bias, z: intensity, w: 1 if depth is homogeneous
 uniform vec4 u_texel;         // xy: half-res texel size (uv units)
@@ -17,7 +17,7 @@ uniform vec4 u_kernel[16];    // xyz: tangent-space sample offset, w: weight
 vec3 reconstructViewPos(vec2 _uv, float _depth) {
   float ndcY = u_screenParams.x > 0.5 ? _uv.y * 2.0 - 1.0 : 1.0 - _uv.y * 2.0;
   float ndcZ = u_ssaoParams.w > 0.5 ? _depth * 2.0 - 1.0 : _depth;
-  vec4 v = mul(u_invProj, vec4(_uv.x * 2.0 - 1.0, ndcY, ndcZ, 1.0));
+  vec4 v = mul(u_ssaoInvProj, vec4(_uv.x * 2.0 - 1.0, ndcY, ndcZ, 1.0));
   return v.xyz / v.w;
 }
 
@@ -47,7 +47,7 @@ void main() {
   for (int i = 0; i < 16; ++i) {
     vec3 samplePos = pos + tbn * (rot * u_kernel[i].xyz) * u_ssaoParams.x;
     // Project the sample to screen space and read the actual scene depth there.
-    vec4 pc = mul(u_proj, vec4(samplePos, 1.0));
+    vec4 pc = mul(u_ssaoProj, vec4(samplePos, 1.0));
     pc /= pc.w;
     vec2 suv = pc.xy * 0.5 + 0.5;
     suv.y = u_screenParams.x > 0.5 ? suv.y : 1.0 - suv.y;

@@ -178,7 +178,7 @@ class Renderer {
     bgfx::UniformHandle sunDir, sunColor, skyAmbient, groundAmbient, fogColor, fogParams, camPos, wind, shadowParams,
         shadowMtx, skyZenith, skyHorizon, fireLight, fireColor, invViewProjSky, screenParams, post, grade, sHdr, sShadow;
     // Post chain.
-    bgfx::UniformHandle bright, blurDir, sunScreen, texel, effects, proj, invProj, ssaoParams;
+    bgfx::UniformHandle bright, blurDir, sunScreen, texel, effects, ssaoProj, ssaoInvProj, ssaoParams;
     bgfx::UniformHandle kernel;  // vec4[16]
     bgfx::UniformHandle sBloom, sShafts, sSsao, sBlur, sDepth;
   } u_{};

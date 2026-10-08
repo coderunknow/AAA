@@ -243,8 +243,8 @@ bool Renderer::init(const RendererInit& in) {
   u_.sunScreen = U("u_sunScreen");
   u_.texel = U("u_texel");
   u_.effects = U("u_effects");
-  u_.proj = U("u_proj", bgfx::UniformType::Mat4);
-  u_.invProj = U("u_invProj", bgfx::UniformType::Mat4);
+  u_.ssaoProj = U("u_ssaoProj", bgfx::UniformType::Mat4);
+  u_.ssaoInvProj = U("u_ssaoInvProj", bgfx::UniformType::Mat4);
   u_.ssaoParams = U("u_ssaoParams");
   u_.kernel = bgfx::createUniform("u_kernel", bgfx::UniformType::Vec4, 16);
   u_.sBloom = U("s_bloom", bgfx::UniformType::Sampler);
@@ -319,7 +319,7 @@ void Renderer::shutdown() {
   for (bgfx::UniformHandle h : {u_.sunDir, u_.sunColor, u_.skyAmbient, u_.groundAmbient, u_.fogColor, u_.fogParams,
                                 u_.camPos, u_.wind, u_.shadowParams, u_.shadowMtx, u_.skyZenith, u_.skyHorizon,
                                 u_.invViewProjSky, u_.screenParams, u_.post, u_.grade, u_.sHdr, u_.sShadow, u_.bright,
-                                u_.blurDir, u_.sunScreen, u_.texel, u_.effects, u_.proj, u_.invProj, u_.ssaoParams,
+                                u_.blurDir, u_.sunScreen, u_.texel, u_.effects, u_.ssaoProj, u_.ssaoInvProj, u_.ssaoParams,
                                 u_.kernel, u_.sBloom, u_.sShafts, u_.sSsao, u_.sBlur, u_.sDepth})
     if (bgfx::isValid(h)) bgfx::destroy(h);
   shaders_.reset();
@@ -840,8 +840,8 @@ void Renderer::submitPostEffects(const CameraView& cv, const float* proj, const 
   if (settings_.ssao && bgfx::isValid(ssaoFb_[0]) && bgfx::isValid(ssaoFb_[2]) && bgfx::isValid(depthTex_)) {
     float invProj[16];
     bx::mtxInverse(invProj, proj);
-    bgfx::setUniform(u_.proj, proj);
-    bgfx::setUniform(u_.invProj, invProj);
+    bgfx::setUniform(u_.ssaoProj, proj);
+    bgfx::setUniform(u_.ssaoInvProj, invProj);
     bgfx::setUniform(u_.kernel, ssaoKernel_, 16);
     const float params[4] = {settings_.ssaoRadius, 0.02f, settings_.ssaoIntensity, homDepth ? 1.0f : 0.0f};
     bgfx::setUniform(u_.ssaoParams, params);
