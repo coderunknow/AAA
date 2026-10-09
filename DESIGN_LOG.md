@@ -775,3 +775,64 @@ All `run:` blocks in both workflows still pass `bash -n`, and both files parse.
 cannot exercise it (the job is skipped for `v0.1.0-rc`), so the publish path's first real
 execution is the `v0.1.0` run after the merge. The simulation covers everything except GitHub's
 own behaviour — token scopes, artifact extraction and the release API.
+
+### #24 — 2026-10-09 — DONE: PR #2 merged, v0.1.0 tagged and published
+
+The owner approved the merge explicitly. Sequence, following PROMPT §14.4.
+
+| Step | Value |
+|---|---|
+| Final check | head `d074ecf` = remote; CI 8/8 green; release dry run `37888040726` green on that exact `head_sha` |
+| PR | #2 `MERGEABLE`, base `main` |
+| Merge | `gh pr merge 2 --merge` → merge commit **`7bcf9e70aa420a4d4fba253f5f883319d11220da`** |
+| Draft release | `gh release create v0.1.0 --target 7bcf9e70 --draft --notes-file docs/release-notes-v0.1.0.md` |
+| Release run | `37890164724` — **all 7 jobs success**, including *Publish draft release v0.1.0* |
+| Published | `gh release edit v0.1.0 --draft=false` → https://github.com/coderunknow/AAA/releases/tag/v0.1.0 |
+
+**Release assets (7/7, all sizes plausible):**
+
+```
+mistpine-v0.1.0-windows-x64.zip          3,778,688
+mistpine-v0.1.0-web-singlefile.html      3,445,276
+mistpine-v0.1.0-linux-x86_64.AppImage    2,954,432
+mistpine-v0.1.0-linux-x86_64.tar.gz      2,742,772
+mistpine-v0.1.0-macos-arm64.zip          2,267,698
+mistpine-v0.1.0-web.zip                    914,150
+SHA256SUMS.txt                                 594
+```
+
+The publish job's own "Verify the draft release" step asserted all seven are present, and the
+checksums job ran `sha256sum -c` plus an exact-count check before that.
+
+**`gh workflow run` does not work with this token.** After the merge `release.yml` is on the
+default branch, so the 404 from earlier became a **403 "Resource not accessible by integration"**
+— the integration cannot create workflow dispatch events. The workflow also triggers on
+`push: tags: ['v*']`, so the release was started by **pushing the `v0.1.0` tag** at the merge
+commit. That satisfies the guard identically: `inputs.tag` is empty, so it falls back to
+`github.ref_name == 'v0.1.0'`, and `inputs.sha` is empty, so checkout uses `github.ref`
+(`refs/tags/v0.1.0`) and `SHA` falls back to `GITHUB_SHA` — both the merge commit. Tagging the
+release and triggering it became one action.
+
+**The publish job ran for the first time and passed.** Every step succeeded, including the
+`gh run download` step that would have 403'd without the `actions: read` fix from #23, and the
+find-based asset location and size-plausibility checks added there. That closes the last
+never-executed path in the pipeline.
+
+**GitHub Pages — now proven, not inferred.** The post-merge CI run on `main` (`37889995663`) is
+green; the Pages job itself failed, and the annotation is unambiguous:
+
+```
+Error: Failed to create deployment (status: 404) with build version 7bcf9e70...
+Ensure GitHub Pages has been enabled: https://github.com/coderunknow/AAA/settings/pages
+```
+
+So the pipeline half is correct — the artifact is uploaded and `deploy-pages@v4` runs — and
+**enabling Pages in Settings is the only remaining step**. `continue-on-error: true` on that job
+is what keeps the CI run green while Pages is off. This is an owner action; the token returns 403
+for `POST /repos/.../pages`.
+
+**Notes for the record.** `gh release create --draft` records `tagName: v0.1.0` but does not
+create the git tag ref until the release is published (hence the interim
+`releases/tag/untagged-…` URL). The `v0.1.0` ref exists because it was pushed. All three review
+bots (Kilo, Copilot, CodeRabbit) were quota- or star-count-blocked and produced no findings, so
+the only red check on the PR was Kilo's billing notice.

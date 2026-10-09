@@ -91,10 +91,18 @@ Awaiting the owner's explicit merge approval (PROMPT §14.3); nothing has been m
 | **37805433751** | release | v0.1.0-rc | **f8bd485** | **failure** | shader-assets ✅ web ✅ macOS ✅ Linux ✅; Windows ❌ — audit ran correctly, flagged 13 `api-ms-win-crt-*` imports |
 | **37808662729** | ci | branch | **aa260b9** | **success** | all 8 jobs green |
 | **37808656086** | release | v0.1.0-rc | **aa260b9** | **success** | **FULLY GREEN — all 6 jobs, incl. SHA256SUMS** |
-| **37885730503** | ci | branch | **3e0172e** | **success** | all 8 jobs green — **current head** |
-| **37885727223** | release | v0.1.0-rc | **3e0172e** | **success** | all 6 jobs green — **current head** |
+| **37888043981** | ci | branch | **d074ecf** | **success** | all 8 jobs green — **current head** |
+| **37888040726** | release | v0.1.0-rc | **d074ecf** | **success** | all 6 jobs green — **current head** |
 
-`3e0172e` is the branch head and is fully verified on both workflows. Nothing has been merged.
+`d074ecf` is the branch head and is fully verified on both workflows. Nothing has been merged.
+
+**Open risk: the publish job has never executed on a runner.** It is guarded on the tag being
+exactly `v0.1.0`, so the rc dry runs skip it. A read-through found a blocking bug (declaring
+`permissions: contents: write` sets `actions` to `none`, so `gh run download` would 403); that is
+fixed, and the rewritten asset handling is verified by local simulation (6/6 cases: flat and
+nested artifact layouts, missing asset, truncated asset, implausible checksums, pre-existing
+release). What simulation cannot cover is GitHub's own behaviour — token scopes, artifact
+extraction layout and the release API. See DESIGN_LOG #23.
 The final report for this release is at `../FINAL_REPORT.md` (outside the repository).
 The new `nostorage` playtest ran and passed in **both** workflows (CI browser job; release web
 job against the single-file HTML over `file://`), so §13's "remain playable if persistence is
