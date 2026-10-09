@@ -4,12 +4,20 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+#include <cstdio>
+
 #include "app/app.h"
+#include "core/version.h"
 
 SDL_AppResult SDL_AppInit(void** state, int argc, char** argv) {
+  const aaa::AppOptions opts = aaa::parseOptions(argc, argv);
+  if (opts.showVersion) {
+    std::printf("Mistpine %s\n", aaa::appVersion());  // --version: print and exit 0
+    return SDL_APP_SUCCESS;
+  }
   auto* app = new aaa::App();
   *state = app;
-  return app->init(aaa::parseOptions(argc, argv)) ? SDL_APP_CONTINUE : SDL_APP_FAILURE;
+  return app->init(opts) ? SDL_APP_CONTINUE : SDL_APP_FAILURE;
 }
 
 SDL_AppResult SDL_AppIterate(void* state) {

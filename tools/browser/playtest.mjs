@@ -17,23 +17,36 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) =>
 }, []));
 const dir = path.resolve(args.dir ?? '../../build/web-dev/src/app');
 const out = path.resolve(args.out ?? '../../qa/latest');
-const query = args.query ?? '';
+// The `default` script toggles the diagnostics overlay with F3; the overlay only exists
+// with ?debug=1, so make sure the flag is present for that script (README: URL options).
+let query = args.query ?? '';
 const script = args.script ?? 'default';
+if (script === 'default' && !/[?&]debug=1(&|$)/.test(query)) query = (query ? query + '&' : '') + 'debug=1';
 const width = Number(args.width ?? 1280), height = Number(args.height ?? 720);
 const readyTimeout = Number(args.timeout ?? 600) * 1000;
 fs.mkdirSync(out, { recursive: true });
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm', '.data': 'application/octet-stream',
   '.map': 'application/json', '.json': 'application/json' };
-const server = http.createServer((req, res) => {
-  const url = decodeURIComponent(req.url.split('?')[0]);
-  const file = path.join(dir, url === '/' ? 'index.html' : url);
-  if (!file.startsWith(dir) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
-  res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' });
-  fs.createReadStream(file).pipe(res);
-});
-await new Promise(r => server.listen(0, '127.0.0.1', r));
-const port = server.address().port;
+// --file <path> runs the single-file web build straight from file:// (no HTTP server).
+const fileMode = args.file && args.file !== 'true' ? path.resolve(args.file) : null;
+let server = null;
+let pageUrl;
+if (fileMode) {
+  // file:// mode: the single-file build must work with no HTTP server at all.
+  pageUrl = 'file://' + fileMode + (query ? (fileMode.includes('?') ? '&' : '?') + query : '');
+} else {
+  server = http.createServer((req, res) => {
+    const url = decodeURIComponent(req.url.split('?')[0]);
+    const file = path.join(dir, url === '/' ? 'index.html' : url);
+    if (!file.startsWith(dir) || !fs.existsSync(file)) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] ?? 'application/octet-stream' });
+    fs.createReadStream(file).pipe(res);
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  pageUrl = `http://127.0.0.1:${port}/?${query}`;
+}
 
 const log = [];
 const t0 = Date.now();
@@ -44,7 +57,7 @@ page.on('console', m => log.push(`${stamp()} [${m.type()}] ${m.text()}`));
 page.on('pageerror', e => log.push(`${stamp()} [pageerror] ${e.message}`));
 page.on('requestfailed', r => log.push(`${stamp()} [requestfailed] ${r.url()} ${r.failure()?.errorText}`));
 
-const summary = { url: `http://127.0.0.1:${port}/?${query}`, viewport: [width, height], shots: [], renderer: null };
+const summary = { url: pageUrl, fileMode: !!fileMode, viewport: [width, height], shots: [], renderer: null };
 const shot = async (name) => {
   const file = path.join(out, `${name}.png`);
   await page.screenshot({ path: file });
@@ -69,6 +82,33 @@ const measureFps = async (ms) => page.evaluate(ms => new Promise(res => {
   const f = () => { n++; if (performance.now() - s < ms) requestAnimationFrame(f); else res(n * 1000 / (performance.now() - s)); };
   requestAnimationFrame(f);
 }), ms);
+// The game runs at a handful of frames per second under software rendering, so a UI
+// transition can take several seconds of wall clock. Wait for the state snapshot to
+// report the expected menu instead of sleeping for a fixed time — the click is latched
+// in C++ and consumed on the next frame, so this is a wait, not a poll race.
+const waitForMenu = async (menu, what) => {
+  try {
+    await page.waitForFunction(
+      (m) => !!(window.__mistpineState && window.__mistpineState.menu === m),
+      { timeout: 90000, polling: 250 }, menu);
+  } catch (e) {
+    const state = await page.evaluate(() => window.__mistpineState || null);
+    throw new Error(`timed out waiting for the ${what} (menu '${menu}'); state: ${JSON.stringify(state)}`);
+  }
+};
+
+// `nostorage` scenario (PROMPT 13): persistence unavailable — private mode, blocked
+// storage, or a full quota. Make `window.localStorage` throw the way a browser that
+// denies storage does, before any page script runs. The game must stay playable and
+// must not log an ERROR (it reports the failure once as a toast instead).
+if (script === 'nostorage') {
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() { throw new DOMException('The operation is insecure.', 'SecurityError'); },
+    });
+  });
+}
 
 let ok = false;
 try {
@@ -86,9 +126,12 @@ try {
   summary.readySeconds = (Date.now() - t0) / 1000;
   await sleep(2500);  // let the overlay fade and streaming settle
   await shot('00-title');
-  await page.click('#canvas').catch(() => {});
+  summary.titleMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+  await page.click('#canvas').catch((e) => { log.push(`${stamp()} [qa] canvas click failed: ${e.message}`); });
+  await waitForMenu('playing', 'title click to start the journey');
   await sleep(1500);  // menu veil fades, HUD fades in
   if (script === 'default') {
+    summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
     await shot('01-spawn');
     summary.rafFpsIdle = await measureFps(3000);
     await look(-260, 0);
@@ -108,25 +151,70 @@ try {
     // Save round trip through real browser localStorage: play, pause (saves), reload, continue.
     await hold(['KeyW'], 3000);
     await press('Escape');
+    await waitForMenu('pause', 'pause menu after Escape');
     await sleep(2500);
     await shot('01-paused');
+    summary.pausedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
     const save = await page.evaluate(() => localStorage.getItem('mistpine-save'));
     summary.saveBytes = save ? save.length : 0;
     summary.saveHead = save ? save.slice(0, 120) : null;
     if (!save) throw new Error('no save in localStorage after pausing');
+    if (summary.pausedMenu !== 'pause') throw new Error('expected the pause menu, got: ' + summary.pausedMenu);
     await page.goto(summary.url.replace(/[?&]new=1/, (m) => m[0] === '?' ? '?' : ''), { waitUntil: 'load' });  // reload without ?new=1
     await page.waitForFunction(() => window.__mistpineReady === true, { timeout: readyTimeout, polling: 500 });
     await sleep(2500);
-    summary.titleButton = await page.evaluate(() => document.getElementById('begin').textContent);
+    // The in-engine title screen reports itself through window.__mistpineState.
+    const titleState = await page.evaluate(() => window.__mistpineState);
+    summary.titleState = titleState ? { menu: titleState.menu, hasSave: titleState.hasSave, version: titleState.version } : null;
     await shot('02-continue-title');
-    if (summary.titleButton !== 'Continue') throw new Error('title does not offer Continue: ' + summary.titleButton);
-    await page.click('#begin');
+    if (!titleState || titleState.menu !== 'title' || !titleState.hasSave)
+      throw new Error('title state does not offer Continue: ' + JSON.stringify(summary.titleState));
+    await page.click('#canvas');
+    await waitForMenu('playing', 'Continue to resume the journey');
     await sleep(2500);
+    summary.resumedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
     await shot('03-resumed');
+  } else if (script === 'nostorage') {
+    // Persistence is blocked. Play normally, then force a save attempt (Escape ->
+    // pause writes the save) and confirm the journey survives it.
+    summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    await shot('01-spawn-no-storage');
+    await hold(['KeyW'], 3000);
+    await sleep(600);
+    await shot('02-after-walk-no-storage');
+    summary.storageBlocked = await page.evaluate(() => {
+      try { window.localStorage.getItem('probe'); return false; } catch (e) { return true; }
+    });
+    if (!summary.storageBlocked) throw new Error('localStorage was not blocked — the scenario proves nothing');
+    await press('Escape');
+    await waitForMenu('pause', 'pause menu after Escape with storage blocked');
+    await sleep(2500);
+    await shot('03-paused-no-storage');
+    summary.pausedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    if (summary.pausedMenu !== 'pause') throw new Error('expected the pause menu, got: ' + summary.pausedMenu);
+    // ...and it must resume just as if saving had worked.
+    await press('Escape');
+    await waitForMenu('playing', 'resume with storage blocked');
+    await sleep(1200);
+    summary.resumedMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    await shot('04-resumed-no-storage');
   } else if (script === 'still') {
     await sleep(1500);
     await shot('01-still');
     summary.rafFpsIdle = await measureFps(3000);
+  } else if (script === 'qa') {
+    // Visual QA matrix (PROMPT §12): one fixed-framing screenshot of the title and one
+    // of the ?qa= scenario. The framing is pinned by the game (camera override), so the
+    // capture is reproducible regardless of frame rate.
+    await sleep(1200);
+    await page.click('#canvas').catch((e) => { log.push(`${stamp()} [qa] canvas click failed: ${e.message}`); });
+    await waitForMenu('playing', 'title click to start the journey');
+    summary.playingMenu = await page.evaluate(() => window.__mistpineState && window.__mistpineState.menu);
+    await sleep(2500);  // let the veil fade, the world settle and streaming catch up
+    // Let deferred streaming settle a little longer at low frame rates.
+    await sleep(2500);
+    await shot('01-scene');
+    summary.rafFpsIdle = await measureFps(2000);
   }
   ok = true;
 } catch (e) {
@@ -135,10 +223,16 @@ try {
 } finally {
   summary.ok = ok;
   summary.consoleErrors = log.filter(l => /\[(error|pageerror)\]/.test(l)).length;
+  // Release gate (PROMPT §9.9): zero browser console errors are required.
+  if (summary.consoleErrors > 0) {
+    ok = false;
+    summary.ok = false;
+    log.push(`${stamp()} [qa] FAILED: ${summary.consoleErrors} console error(s), see console.log`);
+  }
   fs.writeFileSync(path.join(out, 'console.log'), log.join('\n') + '\n');
   fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(summary, null, 2));
   await browser.close();
-  server.close();
+  if (server) server.close();
   console.log(JSON.stringify(summary, null, 2));
   process.exit(ok ? 0 : 1);
 }

@@ -9,12 +9,13 @@ vertical slice is generated at load time by code in this repository, from a fixe
 | Vegetation (pines, bamboo, ferns, grass, shrubs) | `src/procgen/vegetation_meshes.cpp` | Procedural branch/leaf-card meshes |
 | Rocks and limestone outcrops | `src/procgen/rock_meshes.cpp` | Displaced, faceted procedural meshes |
 | Abandoned shrine (gate, hall, steps, lantern, collapsed roof) | `src/world/shrine.cpp`, `src/procgen/structure_meshes.cpp` | Original design: generic East-Asian timber vocabulary, no reference structure copied |
-| Player character and wolves | `src/render/character_renderer.cpp`, `src/game/wolf_pose.cpp` | Procedural rigid-part bodies with code-driven animation |
+| Player character and wolves | `src/game/skin.cpp`, `src/game/player_rig.cpp`, `src/game/wolf_rig.cpp` (meshes/poses), `src/render/skin_renderer.cpp` + `shaders/vs_skin.sc`/`fs_skin.sc` (GPU skinning) | Procedural skinned meshes and skeletons generated in code; procedural gait, foot IK, secondary motion, blended states |
 | Campfire, embers, flames | `src/render/object_renderer.cpp`, `shaders/vs_fire.sc`, `shaders/fs_fire.sc` | Procedural geometry + shader-animated billboards |
 | Surface detail texture (bark/stone/soil micro-detail) | `src/procgen/textures.cpp` (uploaded by `src/render/prop_renderer.cpp`) | Procedural noise texture with mip chain |
 | Sky, fog, water, lighting | `shaders/*.sc` | Analytic sky / height fog / shading |
 | All sound (wind, stream, birds, crickets, fire, footsteps, wolves, bell) | `src/audio/soundscape.cpp` | Real-time procedural synthesis, no samples |
-| UI text and layout | `web/shell.html` | System font stacks only (no bundled font files) |
+| UI text and layout | `src/render/ui_renderer.cpp` | SDF atlas generated at load time from the bundled OFL fonts below; menus/HUD are drawn in-engine (`src/app/ui.cpp`) |
+| UI fonts | `assets/fonts/SourceSerif4-Regular.ttf`, `assets/fonts/SourceSerif4-It.ttf` | Source Serif 4 by Adobe, **SIL OFL-1.1** (license: `assets/fonts/OFL-1.1.txt`), fetched from `github.com/adobe-fonts/source-serif` (`TTF/` directory); rasterised into a signed-distance-field atlas by stb_truetype at load time |
 
 The session-1 plan allowed AI-generated albedo textures and CC0 assets cloned from Git. **Neither
 was used** in this slice, so there is no third-party art licence to track.
@@ -26,6 +27,7 @@ was used** in this slice, so there is no third-party art licence to track.
 | [bgfx / bx / bimg](https://github.com/bkaradzic/bgfx) via [bgfx.cmake](https://github.com/bkaradzic/bgfx.cmake) (pinned commit in `cmake/Dependencies.cmake`) | Rendering abstraction, shader compiler (build-time tool) | BSD-2-Clause |
 | [SDL 3](https://github.com/libsdl-org/SDL) `release-3.4.18` | Window, input, gamepad, audio device | Zlib |
 | [Emscripten](https://github.com/emscripten-core/emscripten) 4.0.11 | C++ → WebAssembly toolchain and runtime | MIT / University of Illinois NCSA |
+| [stb_truetype](https://github.com/nothings/stb/blob/master/stb_truetype.h) (bundled with the pinned bgfx at `bgfx/3rdparty/stb/`) | Rasterises the OFL UI fonts into the SDF atlas at load time | MIT / public domain |
 
 The browser QA harness (`tools/browser`, dev-only, not shipped) uses `puppeteer-core` (Apache-2.0)
 and `@sparticuz/chromium` (MIT).

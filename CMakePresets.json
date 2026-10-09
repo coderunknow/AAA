@@ -1,52 +1,134 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
   "configurePresets": [
     {
-      "name": "base", "hidden": true, "generator": "Ninja",
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}"
     },
     {
-      "name": "tools", "inherits": "base",
+      "name": "tools",
+      "inherits": "base",
       "displayName": "Host tools (bgfx shaderc, texturec)",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "AAA_BUILD_TOOLS": "ON", "AAA_BUILD_GAME": "OFF", "AAA_BUILD_TESTS": "OFF", "AAA_RENDERER_NOOP": "ON" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "AAA_BUILD_TOOLS": "ON",
+        "AAA_BUILD_GAME": "OFF",
+        "AAA_BUILD_TESTS": "OFF",
+        "AAA_RENDERER_NOOP": "ON"
+      }
     },
     {
-      "name": "native-dev", "inherits": "base",
+      "name": "native-dev",
+      "inherits": "base",
       "displayName": "Native development (windowed; needs X11/GL on Linux)",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "AAA_SHADERC": "${sourceDir}/build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AAA_SHADERC": "${sourceDir}/build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc"
+      }
     },
     {
-      "name": "native-headless", "inherits": "base",
-      "displayName": "Native headless (bgfx Noop renderer) — tests + smoke runs",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "AAA_RENDERER_NOOP": "ON", "AAA_SHADERC": "${sourceDir}/build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc" }
+      "name": "native-headless",
+      "inherits": "base",
+      "displayName": "Native headless (bgfx Noop renderer) \u2014 tests + smoke runs",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "AAA_RENDERER_NOOP": "ON",
+        "AAA_SHADERC": "${sourceDir}/build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc"
+      }
     },
     {
-      "name": "web-dev", "inherits": "base",
+      "name": "native-release",
+      "inherits": "base",
+      "displayName": "Native release (windowed; used for the packaged desktop builds)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "AAA_SHADERC": "${sourceDir}/build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc"
+      }
+    },
+    {
+      "name": "web-dev",
+      "inherits": "base",
       "displayName": "WebAssembly development (assertions, debug info)",
       "toolchainFile": "$env{EMSCRIPTEN_ROOT}/cmake/Modules/Platform/Emscripten.cmake",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "AAA_BUILD_TESTS": "OFF", "AAA_SHADERC": "${sourceDir}/build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AAA_BUILD_TESTS": "OFF",
+        "AAA_SHADERC": "${sourceDir}/build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc"
+      }
     },
     {
-      "name": "web-release", "inherits": "web-dev",
+      "name": "web-release",
+      "inherits": "web-dev",
       "displayName": "WebAssembly release",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     },
     {
-      "name": "web-profile", "inherits": "web-dev",
+      "name": "web-profile",
+      "inherits": "web-dev",
       "displayName": "WebAssembly profiling (optimized + symbol names)",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "web-singlefile",
+      "inherits": "web-release",
+      "displayName": "WebAssembly single-file release (one self-contained HTML, file://-capable)",
+      "cacheVariables": {
+        "AAA_SINGLE_FILE": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "tools", "configurePreset": "tools" },
-    { "name": "native-dev", "configurePreset": "native-dev" },
-    { "name": "native-headless", "configurePreset": "native-headless" },
-    { "name": "web-dev", "configurePreset": "web-dev" },
-    { "name": "web-release", "configurePreset": "web-release" },
-    { "name": "web-profile", "configurePreset": "web-profile" }
+    {
+      "name": "tools",
+      "configurePreset": "tools"
+    },
+    {
+      "name": "native-dev",
+      "configurePreset": "native-dev"
+    },
+    {
+      "name": "native-headless",
+      "configurePreset": "native-headless"
+    },
+    {
+      "name": "native-release",
+      "configurePreset": "native-release"
+    },
+    {
+      "name": "web-dev",
+      "configurePreset": "web-dev"
+    },
+    {
+      "name": "web-release",
+      "configurePreset": "web-release"
+    },
+    {
+      "name": "web-profile",
+      "configurePreset": "web-profile"
+    },
+    {
+      "name": "web-singlefile",
+      "configurePreset": "web-singlefile"
+    }
   ],
   "testPresets": [
-    { "name": "native-headless", "configurePreset": "native-headless", "output": { "outputOnFailure": true } }
+    {
+      "name": "native-headless",
+      "configurePreset": "native-headless",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

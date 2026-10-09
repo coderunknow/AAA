@@ -131,6 +131,19 @@ struct Mat4 {
             m[2] * d.x + m[6] * d.y + m[10] * d.z};
   }
   Vec3 position() const { return {m[12], m[13], m[14]}; }
+  // Inverse of a rigid transform (orthonormal rotation + translation, no scale).
+  // Used to rebase animated characters between two simulation states.
+  Mat4 inverseRigid() const {
+    Mat4 r = identity();
+    r.m[0] = m[0];  r.m[1] = m[4];  r.m[2] = m[8];
+    r.m[4] = m[1];  r.m[5] = m[5];  r.m[6] = m[9];
+    r.m[8] = m[2];  r.m[9] = m[6];  r.m[10] = m[10];
+    const Vec3 t{m[12], m[13], m[14]};
+    r.m[12] = -(r.m[0] * t.x + r.m[4] * t.y + r.m[8] * t.z);
+    r.m[13] = -(r.m[1] * t.x + r.m[5] * t.y + r.m[9] * t.z);
+    r.m[14] = -(r.m[2] * t.x + r.m[6] * t.y + r.m[10] * t.z);
+    return r;
+  }
 };
 
 }  // namespace aaa

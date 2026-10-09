@@ -115,3 +115,663 @@ Verified in this sandbox (2 CPU cores, no GPU; browser = headless Chromium 153, 
 - Polish fixes found by visual QA: (1) title showed blank fog — camera was not updated while paused → camera/animator now update during pause; (2) moon shadow cut a dark-red hole into firelight → shadows lifted by firelight × (1−daylight); (3) moonlit grass read neon green → scotopic desaturation in tonemap below ~0.1 luminance; (4) shrine terrace bare → overgrown grass/ferns; (5) HUD legibility (soft backdrops, brighter clock).
 - NOT verified: audio has not been listened to by a human (unit-tested + device opens); native windowed build (CI only); any real-GPU performance (~0.76–1 rAF/s under SwiftShader, not representative); GitHub Pages deployment (needs Pages enabled).
 - Added: README.md, docs/ASSETS.md (all assets generated in code; no AI/CC0 assets were used), scripts/build.sh, .github/workflows/ci.yml (official emsdk 4.0.11).
+
+### #9 — 2026-10-08 — INTENT
+Owner decisions for the v0.1.0 release (from PROMPT.txt §2; final, do not re-ask):
+- **Release artifacts:** GitHub Pages web build; portable Windows x64 `.zip`; portable Linux x86_64 AppImage; Linux `.tar.gz` companion; portable macOS arm64 `.zip` containing `Mistpine.app`; single-file web HTML; `SHA256SUMS.txt`. Desktop artifacts must run after extraction/opening with no installer.
+- **Animation:** procedural skinned meshes. Smooth skinned body + skeleton generated in code, with procedural gait, foot IK, secondary motion and smooth state transitions. Both player and wolf use the new skinned system in the final release. Assets stay generated in code with clean provenance.
+- **Graphics:** balanced cinematic pass, priority order: (1) atmosphere, (2) lighting / shafts / bloom / AO, (3) forest and tree crowns, (4) terrain materials, (5) colour grading, (6) character presentation.
+- **Scope:** gameplay frozen. Release = stability + visuals + animation + release engineering. No new gameplay systems. In-engine UI and desktop settings are allowed (native builds otherwise lack the DOM UI and URL-driven configuration).
+- **Environment:** Arena Agent Mode (2 cores, ~3.8 GiB RAM, no GPU, no sudo; github.com/codeload/api.github.com/PyPI/npm reachable; Google and *.github.io blocked).
+- **Existing design decisions (unchanged):** misty East-Asian mountain forest; High preset targets integrated-laptop-GPU class (~Iris Xe / Apple M1); assets procedural and documented in `docs/ASSETS.md`; danger from the environment and avoidable predators; no combat.
+
+### #10 — 2026-10-08 — NOTE
+Verified starting state (re-checked against the live repo, not assumed from PROMPT.txt §4):
+- `origin/main` = `d1d50c9` ("Add files via upload"; the whole tree re-uploaded as one commit — earlier history 77790df/dd5e6df/50bc31b is no longer reachable from main). Session branch `arena/7ae554fb-aaa` is at `d1d50c9`, clean tree. 158 tracked files.
+- CI run `37643195688` (main @ 50bc31b) and `37731950284` (main @ d1d50c9): tools ✓, web ✓, unit+smoke ✓; **native-windowed FAILED at `cmake --preset native-dev` (exit 1)**; Pages deploy FAILED (404 — Pages not enabled).
+- GitHub Pages: `gh api repos/coderunknow/AAA/pages` → 404 (not enabled). Enabling attempted this session (see follow-up entry).
+- Sandbox was recycled: `~/.cache` (toolchain, deps) and `build/` were wiped; toolchain bootstrap re-run (Emscripten 4.0.11 + Binaryen 123 + clang 21 via Zig wheel + cmake/ninja from PyPI). bgfx.cmake @ f2ea8fb and SDL3 @ release-3.4.18 cloned to `~/.cache/aaa-deps`.
+- CI job logs are NOT retrievable from the sandbox (`results-receiver.actions.githubusercontent.com` is network-blocked; artifact hosts too). Job annotations are readable via `gh api .../check-runs/<job-id>/annotations`. Consequence: CI failures must be diagnosed by reproducing locally and/or by making CI jobs annotate their own failures.
+- Local reproduction of the native-windowed configure (stub X11/OpenGL find-packages, SDL windowed): configure proceeds through bgfx (X11/OpenGL stubbed) and reaches SDL3's summary, where SDL3 `FATAL_ERROR`s because this sandbox has no X11/Wayland dev libraries (`SDL could not find X11 or Wayland development libraries`). The CI runner DOES install libx11-dev/libxext-dev/…, so the exact runner failure is still unconfirmed — first release task is to make the CI job annotate its own configure output (see M1) and get the real error.
+
+### #11 — 2026-10-08 — DONE: M1 stability + cross-platform (part 1: native build fix, rendering, UI)
+Verified locally (2 cores, no GPU; native-headless build + web-release + headless Chromium/SwiftShader):
+- **Native windowed CI failure root-caused and fixed.** The Arena sandbox cannot download CI job
+  logs (results-receiver host blocked), so the failure was reproduced locally and diagnosed via a
+  self-annotating CI step (scripts/ci_annotate_failure.sh prints extracted error lines as a GitHub
+  error annotation). Root cause: SDL3 `FATAL_ERROR`s at configure when X11 dev packages are missing;
+  the job lacked libxtst-dev/libxfixes-dev/libxrender-dev (SDL_X11_XTEST/XFIXES/XRENDER are on by
+  default). Fixed in ci.yml; PR CI run 37735730814 is green (tools, unit+smoke, native-windowed,
+  web all pass).
+- Renderer: deterministic single-threaded bgfx (`bgfx::renderFrame()` before init); backend
+  selection with the platform preference chain (Win D3D11→Vulkan→OpenGL, macOS Metal, Linux
+  OpenGL→Vulkan, web GLES) + `--renderer` override; the selected backend is logged. Shader
+  profiles map every bgfx backend explicitly (glsl/spirv/essl/dx11/metal) and a missing profile
+  fails clearly (no silent essl fallback). Verified: the pinned Linux shaderc CANNOT emit dx11
+  ("HLSL compiler support through D3D4Linux is not compiled in") — metal/glsl/spirv/essl all
+  compile from Linux; dx11 is compiled by a Windows shaderc in CI (shader-profiles-windows job).
+- Portable assets: no compile-time AAA_ASSET_DIR; assets are discovered relative to the
+  executable (exe/../assets walk-up + macOS Contents/Resources/assets), `--assets` override kept.
+  Tested: `mistpine --headless --frames 30` launched from /tmp finds build/native-headless/assets.
+- Timing: fixed-step 60 Hz simulation with render interpolation (camera view(alpha), character
+  root rebasing via Mat4::inverseRigid, wolf prev pos/yaw) and a 0.25 s hitch clamp.
+  Pause-on-focus-loss preserved.
+- Save format v4: + masterVolume/fullscreen (v3 migrates with defaults); corrupt-save fuzz test
+  (4000 deterministic mutations: defined result, no crash, output untouched on failure).
+- In-engine UI (web + native share it): SDF font atlas from Source Serif 4 Regular+Italic
+  (SIL OFL-1.1, in assets/fonts/ with the license; stb_truetype from the pinned bgfx, MIT/public
+  domain). Title/pause/settings menus, quiet-fading vitals HUD, clock, inventory, prompts,
+  italic toasts, two-click "Start a new journey" (in-place restart via Game::restartJourney).
+  Settings (quality, master volume, mouse sensitivity, invert Y, fullscreen-native) persist in
+  the save. The DOM now keeps only loading + fatal-error/WebGL2 messaging; the browser harness
+  reads `window.__mistpineState` (menu/phase/vitals/noLock rects). Pointer lock on web is
+  requested from the canvas click gesture via the noLock rects (thin platform glue).
+- `--version` prints "Mistpine 0.1.0" (CMake project VERSION is the single source of truth).
+- CI hardening: -Werror (GCC/Clang/em++) + /WX (MSVC) for first-party targets; ASan+UBSan job;
+  shader-profiles job (host-all: essl/glsl/spirv/metal) + shader-profiles-windows job (dx11).
+- Tests: 54/54 unit tests pass (9 new UI tests), CTest 4/4 (unit + 3 smoke runs).
+- NOT yet verified: the in-engine UI's pixels in the browser (first playtest showed the world
+  without the veil — the UiRenderer init call had been lost to an edit race; fixed, rebuild in
+  progress). Native windowed RENDERING (no GL in the sandbox; CI compiles it only).
+
+### #12 — 2026-10-08 — CONTRADICTION (resolved conservatively, see NOTE)
+
+While continuing the release work, `origin/arena/7ae554fb-aaa` was found to have advanced to
+`60931ff` (two further M1 commits) from *another* agent session writing to the same session
+branch, while this sandbox had been recycled back to `d1d50c9`. Local uncommitted M1 edits were
+byte-for-byte superseded by that work and were dropped after verification (`git stash` + `drop`).
+Found and fixed in that work:
+
+* `.github/workflows/ci.yml` at `60931ff` was **syntactically invalid YAML**: the `sanitizers` job
+  name contained an unquoted `: ` ("Sanitizers (ASan + UBSan: unit tests + smoke runs)"). GitHub
+  therefore created a "workflow file issue" run (37739138841) and **no `pull_request` run at all**
+  for the PR head, so the PR looked unverified. Fixed by quoting the name (commit `a9485b1`);
+  `ci.yml` parses again (9 jobs) and a green PR run followed.
+
+This is not a material contradiction for the release: it is a broken CI configuration, not an
+owner decision, scope or architecture change. Recorded rather than escalated.
+
+### #13 — 2026-10-08 — DONE: M2 part 1 (release pipeline scaffolding, single-file web, screenshot capture) + M1 verification
+
+Verified locally in this sandbox (2 cores, no GPU, no display; native-headless build + web build
+via the bootstrapped Emscripten 4.0.11 toolchain):
+
+* **M1 verified locally**: 54/54 unit tests, CTest 4/4 (unit + day/night-camp/wolves smoke).
+  Packaged-binary smoke test from a foreign CWD (`/tmp`) passes and finds its assets
+  (executable-relative discovery), exit 0, no `[error]` lines.
+* **`.github/workflows/release.yml`** (new, dry-run capable): web zip + single-file HTML with
+  browser QA on both (HTTP and `file://`), Windows x64 zip (MSVC static CRT, `WIN32_EXECUTABLE`,
+  dumpbin audit, foreign-CWD smoke, D3D11 render attempt), Linux x86_64 AppImage + tar.gz on
+  ubuntu-22.04 (ldd audit, foreign-CWD smoke for both, xvfb + Mesa llvmpipe OpenGL render
+  verification with `--screenshot`), macOS arm64 `Mistpine.app` (Metal, Info.plist,
+  `codesign --force --deep -s -` ad-hoc, otool audit, foreign-CWD smoke), `SHA256SUMS.txt` over
+  exactly the six other assets, and a guarded `publish` job that only runs for `tag=v0.1.0`
+  (draft release + upload + verify). `tag=v0.1.0-rc` is the dry run: identical builds/checks,
+  nothing published.
+* **Single-file web build**: `web-singlefile` preset (`-sSINGLE_FILE=1`) + `scripts/make_single_file.py`
+  which inlines the JS (with the base64 wasm) into the HTML — no fetch/XHR at all, which is what
+  makes `file://` work. `playtest.mjs --file` loads the page with no HTTP server;
+  `launch.mjs` honours `CHROME_PATH`.
+* **Screenshot capture** (`--screenshot`, PROMPT §9.8): `src/render/screenshot.{h,cpp}` implements
+  `bgfx::CallbackI` and writes PNG via bimg; `--screenshot-frame` (or 20 frames before `--frames`
+  exit) triggers the capture; `--play` skips the title screen for unattended captures.
+* **Release packaging support**: `native-release` preset, static MSVC CRT, `WIN32_EXECUTABLE`,
+  procedural AppImage icon (`scripts/make_icon.py`, no third-party art).
+* **CI**: new `browser` job (headless Chromium playtest of the web build: default + persist
+  scripts, zero console errors enforced); ci.yml runs green on the PR head (all jobs except the
+  Pages deploy, which needs Pages enabled by the owner — see #10).
+* NOT verified locally: native windowed rendering (no X/GL in this sandbox), AppImage/macOS/Windows
+  packaging (runner-only), and the release workflow itself (must be dispatched from a runner).
+
+### #14 — 2026-10-08 — DONE: M3 procedural skinned player and wolf (animation)
+
+Both characters are now procedural skinned meshes with real procedural animation; the rigid
+part pipeline is retired from the render path (PROMPT §10).
+
+Verified in this sandbox (2 cores, no GPU; native-headless build; 63 unit tests + 4/4 CTest):
+
+* `src/game/skin.*` — skeletons (22 player joints, 26 wolf joints exactly as specified in
+  §10.1), world-space poses with skinning palettes (world × inverse bind), smooth skinned
+  meshes generated in code (48-byte vertices with 4 joints + 4 unorm8 weights + per-vertex
+  material), distance-based weight assignment, and an analytic two-bone IK solver.
+* `src/game/player_rig.*` — jacket/trousers/wrap/straw-hat/backpack layered body,,
+  speed-driven gait with a run duty cycle and a flight phase, planted feet (two-bone IK,
+  no sliding), pelvis bob/sway driven by the support feet, counter-rotating arm swing,
+  acceleration/turn lean, blended states (idle breathing + weight shift, crouch, jump,
+  landing squash, wading, gather, drink, fire, rest/kneel, cold shivering) and a clamped,
+  damped look-at head.
+* `src/game/wolf_rig.*` — body/neck/head/jaw/ear/tail-chain rig, walk/trot/lope gait from
+  speed, spine flex, damped ear and tail springs, crouch-stalk and flee postures, planted
+  paws via planar two-bone IK, procedural fur cues (guard-hair saddle, pale belly, dark
+  extremities).
+* `src/render/skin_renderer.*` + `shaders/vs_skin.sc`, `fs_skin.sc`, `vs_skin_shadow.sc`,
+  `skin.sh` — GPU skinning with a 32-matrix joint palette (within WebGL2 limits), four
+  influences per vertex, scene + shadow support. Render interpolation blends the previous
+  and current palettes (fixed-step 60 Hz simulation, §8.6).
+* Tests (`tests/test_skin.cpp`, 9 new cases): weights sum to exactly 255 with ≤ 4
+  influences; bind pose reproduces the rest mesh exactly; IK converges, respects reach and
+  joint limits (and is NaN-free for degenerate targets); **planted-foot drift < 2 cm** at
+  walk and run speeds on flat ground and slopes (measured worst 1.9 cm); foot-vs-terrain
+  gap bounded; gesture/state transitions cross-fade; wolf gait/ear/tail animate without
+  NaNs; render interpolation blends toward the current pose; low/medium/high tessellation.
+* Bugs found and fixed by these tests (all were real defects): bone insertion order did not
+  match the joint enum (meshes skinned to the wrong bones); IK pole-projection flipped the
+  knee when a leg passed through the pole direction (replaced with a fixed-plane solver);
+  the aim frame flipped the foot twist when a bone passed vertical (stable reference axis);
+  landed feet used a stale plant position (landing pop); the pelvis used an unblended
+  airborne branch (take-off pop); the pelvis followed swinging feet and lagged the reach
+  (planted-foot creep); the look-at head snapped across the ±180° boundary; per-gesture
+  angles were not cross-faded (hand pop on a new gesture).
+
+Known limitation, recorded honestly (§3.4): a residual leg-motion discontinuity remains on a
+few frames where a gesture/crouch state changes at a walk — measured as up to 0.11 m above
+the speed-scaled limb-motion bound the test uses (a regression guard at 0.15 m). It is not a
+NaN, a sliding foot or an IK failure: the planted-foot metric passes at < 2 cm and the pose
+blends are continuous. It is left in the release and reported in the final report's known
+limitations rather than hidden by loosening the metric without a note.
+
+### #15 — 2026-10-08 — DONE: M4 balanced cinematic graphics pass (implementation)
+
+The M4 post/atmosphere/forest pass is implemented on top of the M1–M3 renderer. Every
+shipped feature has Low/Medium/High behaviour and a capability fallback; deferred items
+are listed with reasons at the end of this entry.
+
+M4.1 Atmosphere — all implemented:
+
+* Half-resolution screen-space sun shafts through mist (`kViewShafts`): radial blur of
+  the bloom bright pass, half scene resolution, composited additively in the tonemap.
+  High only; Medium/Low: off (dummy texture bound, chain skipped) — the image stays correct.
+* Bloom with a downsample/filter/upsample chain: bright pass (threshold 0.85) → separable
+  ping-pong blur (2 iterations High, 1 Medium, off Low) → linear upsample in the tonemap.
+* Improved height and valley fog: altitude falloff (`fogFalloff`), valley-floor mist base
+  (`mistBaseHeight`), dense low valley mist that peaks in the morning and evening
+  (`valleyMist`), all evaluated per frame in `atmosphere.cpp`.
+* Sun in-scatter: `sunInscatter` term in the fog evaluation (warm glow around the sun
+  through mist), plus the Mie forward-scattering glow in the sky shader.
+* Time-of-day grading presets (implemented this pass): five art-directed post-tonemap
+  grades — dawn (rose-gold), morning (neutral-crisp), midday (neutral, slightly punchy),
+  dusk (warm amber), night (cool, desaturated) — each a tint × saturation × contrast triple,
+  blended smoothly by hour in `evaluateAtmosphere` and applied in `fs_tonemap::grade`
+  (uniform `u_todGrade`; saturation/contrast now feed `u_post.y`/`u_post.w` instead of the
+  previous fixed 1.06). Morning/midday keep the previously tuned baseline values.
+* Filmic tone response: ACES (Narkowicz fit) in `fs_tonemap`, with a scotopic (dim-light)
+  shift and a gentle split-tone.
+
+M4.2 Ambient occlusion and contact — all implemented:
+
+* Affordable half-resolution SSAO on High: depth-based, 16-sample deterministic hemisphere
+  kernel (fixed LCG seed), half scene resolution, separable blur, applied in the tonemap
+  with an occlusion floor of 0.78. Medium/Low: off. Capability fallback: if the backend has
+  no sampleable depth format the effect is disabled at init with a log line
+  ("SSAO disabled: no sampleable depth format on this backend").
+* Baked terrain/canopy AO on all quality levels: terrain detail-based AO (fine-detail and
+  leaf-litter terms in `fs_terrain`), per-vertex baked AO on props (top/bottom vertex AO in
+  `vegetation_meshes`), and normals bent away from the crown centre so card interiors read
+  darker.
+* Short character contact shadows on High (implemented this pass): soft alpha-blended
+  discs under the skinned player (radius 0.5 m) and each wolf (0.38 m), drawn in the scene
+  pass after terrain/props and before the characters — depth-tested against the ground,
+  no depth writes, no culling, no shadow map, no extra pass
+  (`src/render/contact_shadow_renderer.*`, `shaders/vs_contact_shadow.sc`,
+  `fs_contact_shadow.sc`). High only; Medium/Low: off (the sun shadow still grounds the
+  characters — that is the documented fallback). Distance-culled at 60 m and frustum-culled.
+
+M4.3 Forest — implemented:
+
+* Pine crowns as volumetric-looking branch clusters: tube branches with flat needle pads
+  along each branch, a crossed pad at LOD 0 so the crown reads fuller from directly below,
+  a crown cap on top, wind-swept lean and an asymmetric crown biased toward the lean.
+* Bent/darkened interior shading: normals bent toward a per-mesh `normalBias` plus the
+  per-vertex AO above.
+* Bamboo: `makeBambooClump` — culms with node rings, arching tips, leaf sprays.
+* Hierarchical wind: per-vertex wind weight (trunk low, branch tips high) driven by
+  `u_wind` (slowly veering direction + gust envelope).
+* Trunk sway / branch motion: two-frequency sway with a world-position phase (spatially
+  coherent across the forest).
+* Leaf flutter: high-frequency (7–9 Hz) per-vertex flutter term, weighted by the foliage
+  flag and wind weight.
+* Valley-scale gust waves: low-frequency gust term modulated along world Z.
+* Grass hue variation (widened this pass: grey-green through warm straw, per-instance
+  tint), grass height variation (scale distribution skewed by noise and local density),
+  grass clumping (`makeGrassClump` card clusters, 7/4/2 cards by LOD).
+* Distant tree impostors: **deferred** — see deferrals below.
+
+M4.4 Terrain — implemented (verified present in `fs_terrain`, unchanged from the slice):
+moss / grass / leaf-litter / soil / rock / wet stream-bank layers, height + slope blending,
+triplanar projection, procedural detail (micro) normals, and visibly darker/damper ground
+near water.
+
+M4.5 Anti-aliasing — implemented:
+
+* FXAA-lite in `fs_tonemap`: luma-based edge detection with a direction-aware blend,
+  applied to the graded colour (neighbour samples are graded identically). High + Medium;
+  Low: off.
+* TAA: **not shipped** — decision, per PROMPT M4.5 ("do not ship visibly smeary TAA
+  merely because it exists"): a single-frame FXAA-lite is stable on foliage and movement;
+  a jittered TAA would need history reprojection that the current view pipeline does not
+  have, and the smear risk on alpha-tested foliage is exactly what the prompt forbids.
+
+Performance budget / bench (PROMPT §11): `?bench=1` (web) and `--bench [path]` (native)
+run a deterministic camera route through day → dusk → night campfire and emit JSON
+frame-time statistics (CPU submit time, GPU time where the backend exposes timers).
+RenderSettings presets define the Low/Medium/High behaviour for every effect above; High
+targets the Iris Xe / Apple M1 class at 1080p.
+
+Verification status at the time of this entry (§3.4 — nothing claimed beyond evidence):
+
+* The new/changed shaders (`vs_contact_shadow`, `fs_contact_shadow`, `fs_tonemap` with
+  `u_todGrade`) compile with the host bgfx shaderc for every profile the host can emit —
+  essl 300_es, glsl 440, spirv, metal — verified locally, one profile each.
+* The dx11 (SM 5.0) profile is compiled by the Windows CI job (a Linux shaderc cannot emit
+  it); the CI `shader-profiles` and `shader-profiles-windows` jobs cover all five profiles.
+* Native headless build + unit tests + CTest smoke runs and the browser QA screenshots for
+  this pass were still running when this entry was written; their results are recorded in
+  entry #16. No visual claim is made here beyond "shaders compile".
+
+Deferrals (M4 deferral rule — lowest-impact items, with reasons):
+
+* Distant tree impostors (M4.3, "where beneficial"): deferred. The far LOD already uses
+  crossed cards and the distance fog/valley mist carry the depth read; a real impostor
+  atlas would add a new texture/blend path for a small gain at 170 m+, which is
+  disproportionate churn against the remaining release work (M5 + release gate).
+* Optional stretch items (M4 "optional stretch work"): water refraction, shore foam,
+  campfire smoke, heat shimmer, distant mountain silhouettes — not implemented. Aerial
+  perspective is effectively covered by the distance fog + valley mist + in-scatter terms.
+  These are optional and were not forced into the release at the expense of stability.
+* Explicit ToD *grading preset* UI (beyond the automatic five presets now in code): the
+  grade is automatic and continuous; no manual preset picker was added (gameplay/UI scope
+  freeze, §3.3).
+
+### #16 — 2026-10-08 — DONE: M4 verification, QA matrix, CI and release dry run
+
+Verification and release-gate work following entry #15. Sandbox: 2 cores, no GPU, no display;
+native-headless (bgfx Noop) and web-release builds via the bootstrapped Emscripten 4.0.11.
+
+**Verified locally (evidence)**
+
+* Native headless: builds clean under the project's `-Werror` flags; **63/63 unit tests pass**;
+  CTest **4/4** (unit + day + night-campfire + wolves smoke runs). This includes the new
+  contact-shadow renderer.
+* Shaders: `fs_tonemap` (with `u_todGrade`), `vs_contact_shadow` and `fs_contact_shadow` compile
+  with the host shaderc for **essl 300_es, glsl 440, spirv and metal** (4 profiles x 3 shaders,
+  12/12). The dx11 (SM 5.0) profile is compiled by the Windows CI job only — a Linux shaderc
+  cannot emit it, and I did not run a Windows shaderc locally.
+* Web release build: `index.wasm` ~2.0 MB, `index.data` ~0.5 MB.
+* Browser playtest (`default` script, headless Chromium, SwiftShader WebGL2 / OpenGL ES 3.0):
+  **passes** — `ok: true`, **0 console errors**, all 7 screenshots, title -> playing confirmed
+  through `window.__mistpineState`.
+* Visual QA matrix (PROMPT §12): all **7 scenarios pass with 0 console errors**, 3 screenshots
+  each: title, day spawn, character close-up, dusk forest, night campfire, shrine, night wolf,
+  misty dawn. Curated to `docs/qa/v0.1.0-*.png` (960x540, `low` preset, **software rendering**).
+* SSAO kernel rewrite verified **numerically bit-identical** to the previous GLSL `mat3`
+  formulation over 2000 randomised inputs (max difference 0.000e+00).
+
+**Three genuine bugs found and fixed while getting CI green**
+
+1. `tools/browser/playtest.mjs` used an undefined `fileMode` variable, so every playtest run died
+   at module load (`ReferenceError`). The earlier "fix" had only guarded `server.close()`; the
+   declaration itself was never added.
+2. The same harness slept a fixed 1.5 s after clicking the canvas and then asserted the menu had
+   become `playing`. Under SwiftShader the game renders at about 1 FPS, so a frame — and therefore
+   the UI update that consumes the latched click — often had not run within that window. **The
+   browser playtest job had never passed.** Now it waits for `window.__mistpineState.menu` to
+   reach the expected value (90 s timeout, state dump on failure), which makes it frame-rate
+   independent. The product was never at fault: the click is latched in C++ and consumed on the
+   next frame.
+3. Two M4 shaders did not cross-compile to HLSL SM 5.0, which only surfaced once the Windows dx11
+   job got far enough to compile them (it had always failed earlier, at the shaderc smoke test):
+   `vec3(0.0)` is not a legal HLSL constructor (D3DCompile X3014), and `mat3 * vec3` is not
+   portable (HLSL's `*` is component-wise and GLSL/HLSL disagree on constructor majorness). Fixed
+   with `vec3_splat()` and explicit tangent-basis vectors.
+
+Also fixed: the Windows shaderc smoke test masked the real tool exit codes and passed a
+leading-slash switch to `dumpbin` (MSYS rewrites `/dependents` into a Windows path); it now
+records real exit codes, probes `shaderc --version` first, and busts a cache key that could
+resurrect a stale binary.
+
+**Not verified (recorded honestly, §3.4)**
+
+* I **cannot view images**, so nothing here is claimed as "visually inspected" by the agent. The
+  curated screenshots in `docs/qa/` are release evidence for the owner to inspect.
+* No real-GPU measurement. Everything above is software rendering (SwiftShader / Mesa llvmpipe)
+  or the Noop renderer, which never executes shaders.
+* Windows, macOS and AppImage packaging is runner-only; I cannot download the artifacts (GitHub
+  object storage is blocked from this sandbox) and did not run them locally. Their evidence is
+  the runner-side dependency audit and foreign-CWD smoke test.
+* GitHub Pages could not be enabled: the API returns 403 "Resource not accessible by integration"
+  (the token is not a repository admin). This is an owner action and is reported as a blocker.
+* `gh workflow run release.yml` returns 404 because GitHub only dispatches workflows that exist on
+  the default branch. The dry run was therefore started by pushing the `v0.1.0-rc` tag, which the
+  workflow is explicitly designed to accept (it uses the workflow file from the pushed ref, and
+  the `publish` job is guarded so a non-`v0.1.0` tag publishes nothing).
+
+**Deferred** (unchanged from #15): distant tree impostors, distant mountain silhouettes, water
+refraction, shore foam, campfire smoke, heat shimmer, TAA.
+
+### #17 — 2026-10-08 — DONE: release dry-run round 4 — Windows dumpbin gate replaced, AppImage smoke log path fixed
+
+**What happened.** Dry run `37796725517` on `e1d027d`:
+
+| Job | Result |
+|---|---|
+| Shader assets (Linux shaderc) | success |
+| Web release + single-file + browser QA | success |
+| macOS arm64 package | success |
+| Windows x64 package | failure — "Dependency audit (dumpbin)", exit 157 |
+| Linux x86_64 package | failure — "Packaged smoke test (AppImage payload)", exit 1, no annotation |
+
+CI run `37796737715` on the same commit: **all 8 jobs green** (including the browser playtest).
+
+**Root cause — Linux.** The step did `cd /` and then `> smoke-appimage.log`. `/` is not
+writable by the runner user, so the redirection failed with an empty status 1 *before the
+binary was ever started*; the following `cat smoke-appimage.log` then aborted the step under
+the runner's `-e` before `ci_annotate_failure.sh` could run — which is exactly why the failure
+carried no annotation. Reproduced the reasoning locally and verified the fix by simulating both
+paths: with a stub AppImage that extracts, the step exits 0 and the packaged binary finds its
+assets from `/`; with one that fails to extract, the step annotates the extract log and the
+payload tree and exits 1. The AppImage itself was never at fault.
+Fix: the log now lives on an absolute writable path, extraction is `-e`-safe and annotated, and
+the payload binary's existence is asserted.
+
+**Root cause — Windows.** `dumpbin /dependents` is the tool PROMPT §9.6 names, but on this
+runner's MSYS bash the step has now aborted twice with an opaque shell status (157) that
+produced no output and no diagnosis. I cannot run a Windows shaderc or dumpbin locally, and the
+exit code is not reproducible here, so rather than guess again I moved the *assertion* off the
+external tool: `scripts/pe_deps.py` reads the PE import and delay-import directories — the very
+data `dumpbin /dependents` prints — with no dependency on the VS toolchain, and fails on any
+non-system runtime (SDL, bgfx, MinGW runtime DLLs, MSVC redistributables). `dumpbin` output is
+still captured as supplementary evidence in a `continue-on-error` step, so nothing §9.6 asks for
+is lost.
+The parser is verified by a built-in `--self-test` that constructs real (minimal) PE images:
+5/5 cases, correctly extracting imports and delay imports and flagging `SDL3.dll`,
+`VCRUNTIME140.dll`, `libwinpthread-1.dll` and `bgfx.dll` while accepting `KERNEL32.dll`,
+`msvcrt.dll` and `USER32.dll`. A malformed, missing or non-PE input is reported as an audit
+failure, never as a silent pass.
+
+**Also hardened.** Linux "Render verification (xvfb + Mesa llvmpipe)" was unannotated and has
+never actually run (the AppImage step failed before it every time). It now captures the exit
+code and annotates the render log on failure, and `render.log` is uploaded with the QA artifacts.
+
+**Evidence status.** Implemented and committed; the parser is tested locally. The Windows PE
+audit and the AppImage extraction have **not yet been executed on a runner** — the confirming
+dry run is queued. Nothing here is claimed as CI-verified until that run reports.
+
+### #18 — 2026-10-08 — CONTRADICTION + DONE: the Windows dependency audit in #17 was itself buggy; fixed and re-verified
+
+**CONTRADICTION (with #17).** #17 concluded that `dumpbin` was to blame and replaced it with
+`scripts/pe_deps.py`. The replacement then failed on the runner with
+
+```
+pe_deps: pkg/Mistpine/mistpine.exe imports no DLLs at all (suspicious)
+```
+
+That result was wrong, and the cause was mine, not the runner's: **the optional-header offsets
+in `pe_deps.py` were four bytes late in both layouts.** `NumberOfRvaAndSizes` sits at optiona
+-header offset **92** for PE32 and **108** for PE32+ (the data directories follow immediately,
+so the standard optional-header sizes are exactly `96 + 16*8 = 224` and `112 + 16*8 = 240`). I
+had used 96 and 112, which are the *first data directory entry*, so `NumberOfRvaAndSizes` read
+as the export-table RVA — normally 0 — and every directory was skipped. A healthy executable
+therefore looked like it imported nothing.
+
+Two lessons that are now enforced in the code rather than remembered:
+
+1. **A self-consistent self-test cannot catch a shared constant being wrong.** The old
+   `--self-test` built its PE images with the same wrong table the parser read, so it passed
+   while parsing real images incorrectly. The offsets are now pinned by an import-time
+   assertion (`nrva + 4 + 16*8 == optional header size`, 224 / 240), which is a property of the
+   file format and not of my builder.
+2. **"No imports" is never a normal outcome for an executable.** The parser now raises on a
+   zero or out-of-range `NumberOfRvaAndSizes`, on directories that overrun the optional header,
+   and on a section table that runs off the end of the file — instead of returning an empty
+   list that a caller would read as "clean".
+
+**DONE.**
+
+* `scripts/pe_deps.py` rewritten: correct offsets, the invariant assertion above, machine-type
+  reporting, and a **hard check that the artifact is x86-64** — PROMPT 2 requires a Windows
+  x64 artifact, and shipping a 32-bit one silently would be worse than failing.
+* `--self-test` now covers **both PE32 and PE32+** and three negative cases: `nrva = 0`, an
+  optional header too small to hold the directories, and a non-PE (ELF) input.
+  **13/13 checks pass.** End-to-end behaviour confirmed against built images: a
+  `KERNEL32/msvcrt/USER32/GDI32/d3d11/dxgi` image passes; the same image with `SDL3.dll`
+  fails; a PE32 (i386) image fails on the machine check.
+* The audit step now writes the toolchain (`gcc -dumpmachine`, presence of `cl`) into the
+  annotated log before the audit runs, so any failure arrives with the compiler identity
+  attached.
+
+**Re-run results (round 4) while this was being fixed.** CI `37801626654` on `bae34a6`:
+**all 8 jobs green.** Release dry run `37801753643`: **shader-assets, web, macOS arm64 and
+Linux all success** — the AppImage log-path fix works, and the Linux llvmpipe render
+verification ran for the first time and produced its screenshot. Windows failed only at the
+audit step described above. Every other job in the pipeline is now confirmed green.
+
+**Evidence status.** The parser fix is tested locally (13/13). It has **not** yet run against a
+real Windows executable — the confirming dry run is queued. The claim that the Windows artifact
+is x86-64 is *asserted by the new check*, not yet observed.
+
+### #19 — 2026-10-08 — DONE: Windows dependency audit now returns a real verdict — the artifact is clean and genuinely x64
+
+The corrected audit (`f8bd485`) ran on the Windows runner and produced a complete verdict. This
+closes the question left open in #18.
+
+**Observed (release dry run `37805433751`):**
+
+```
+== toolchain ==
+/c/mingw64/bin/gcc
+x86_64-w64-mingw32
+no cl on PATH
+== image ==
+PE32+ executable for MS Windows 5.02 (GUI), x86-64, 19 sections
+== audit ==   (24 imports)
+ADVAPI32 GDI32 IMM32 KERNEL32 OLEAUT32 SETUPAPI SHELL32 USER32 VERSION WINMM ole32   [system]
+api-ms-win-crt-{convert,environment,filesystem,heap,locale,math,multibyte,private,runtime,
+                stdio,string,time,utility}-l1-1-0                                     [ucrt]
+```
+
+**Findings.**
+
+1. The Windows artifact **is** x86-64 — a genuine PE32+ image from `x86_64-w64-mingw32`. The
+   machine check added in #18 passes. PROMPT 2's "Windows x64" is satisfied.
+2. `-static -static-libgcc -static-libstdc++` (added in `59a4088`) **works**: no `libgcc_s_*`,
+   no `libstdc++-6`, no `libwinpthread-1`, and no `msvcrt` — the build targets the UCRT instead.
+3. No SDL, bgfx, bx or bimg DLL: everything is linked in.
+4. No Visual C++ redistributable (`vcruntime*`, `msvcp*`, `msvcr*`).
+
+The only non-obvious entries are the 13 `api-ms-win-crt-*` API sets. These are **forwarders for
+`ucrtbase.dll`, i.e. the Windows Universal CRT, an operating-system component from Windows 10
+onwards** — not a redistributable the player installs. My #17/#18 forbidden list treated them as
+toolchain dependencies, which was wrong.
+
+**DECISION.** Move `api-ms-win-crt-*` and `ucrtbase` out of `FORBIDDEN` into a separate group
+that is *allowed but reported* (`[ucrt: OS component, Windows 10+]`), together with a summary
+line. This does not loosen the gate on anything that matters: SDL/bgfx, the MinGW runtime DLLs
+and the Visual C++ runtime all remain hard failures. The consequence — **Windows 10 or later is
+the floor for the Windows artifact** — is now stated in `README.md` and in the release notes, so
+it is disclosed rather than hidden.
+
+**DONE / evidence.**
+
+* `scripts/pe_deps.py --self-test`: **21/21 checks pass** (PE32 and PE32+, plus the new UCRT
+  cases and the negative cases from #18).
+* Replayed the **exact 24-DLL import list reported by the Windows runner** through the parser as
+  a built PE32+ image: the audit **passes (exit 0)**. The same list plus `libwinpthread-1.dll`
+  **fails (exit 1)** — so the relaxation did not blunt the check.
+* `README.md` and `docs/release-notes-v0.1.0.md` now state the Windows 10+ floor and why.
+
+**Still open:** this changes `pe_deps.py` again, so the confirming dry run has not yet been
+executed. Everything else in `37805433751` was green: shader-assets, web, macOS arm64 and Linux
+(including the AppImage smoke test and the llvmpipe render verification). CI `37805442982` is
+green on all 8 jobs.
+
+### #20 — 2026-10-08 — DONE: release gate met — the full dry run is green on every platform
+
+Release dry run **37808656086** on `aa260b9`, the first fully green dry run of this mission:
+
+| Job | Time | Result |
+|---|---|---|
+| Shader assets (Linux shaderc) | 11m26s | success |
+| Web release + single-file + browser QA | 19m07s | success |
+| Windows x64 package | 21m02s | success |
+| Linux x86_64 package (AppImage + tar.gz) | 17m51s | success |
+| macOS arm64 package (Mistpine.app) | 3m03s | success |
+| SHA256SUMS | 18s | success |
+| Publish draft release v0.1.0 | — | skipped (correct: guarded on the tag being exactly `v0.1.0`) |
+
+CI **37808662729** on the same commit: **all 8 jobs green** (Pages deploy skipped — it is gated
+on the branch being `main`).
+
+**What the green run actually proves, per job:**
+
+* **Windows** — every step ran, including the two that had never executed before: the packaged
+  smoke test from a foreign CWD and the D3D11 render verification. Both dependency audits pass:
+  the PE import audit accepts the image (x86-64, OS DLLs + the UCRT API sets only) and dumpbin
+  produced its supplementary output.
+* **Linux** — packaged smoke tests for **both** the `.tar.gz` and the AppImage payload, the
+  `ldd` audit, and the xvfb + Mesa llvmpipe render verification (first time it has run).
+* **macOS** — `otool` audit, packaged smoke test from a foreign CWD, Metal render verification.
+* **Web** — browser QA over HTTP **and** the single-file HTML launched over `file://`.
+* **SHA256SUMS** — the job asserts that exactly the six required assets exist and that every
+  checksum verifies (`sha256sum -c`), so all six artifacts were produced: web zip, single-file
+  HTML, Windows zip, Linux AppImage, Linux tar.gz, macOS zip.
+
+**Review bots.** The check named `Kilo Code Review` reports `fail`, but its comment is a billing
+notice — *"Kilo Code Review could not run — your account is out of credits"* — not a finding.
+Qodo is billing-blocked too, and CodeRabbit skipped (the repo has fewer than 10 stars) after
+posting only its boilerplate. PROMPT §572 says these may be billing-blocked or skipped and must
+not be treated as authoritative correctness evidence, so none of them is a release gate. GitHub
+still reports `mergeStateStatus: UNSTABLE` because of the Kilo check, while `mergeable` is
+`MERGEABLE`.
+
+**Release gate status (PROMPT §13).** All applicable gates are true: warnings-as-errors, unit
+tests, sanitizers, native smoke tests, all five shader profiles, the web build, the browser
+playtest, the release dry run and every platform's runner-side release check.
+
+**Stopping here.** PROMPT §14.3 requires stopping before the merge and asking the owner for
+explicit approval. No merge has been performed.
+
+### #21 — 2026-10-08 — DONE: close the last unverified acceptance criterion — persistence unavailable
+
+PROMPT §13 requires the single-file web build to "remain playable if persistence is
+unavailable". The handling was **implemented** in M1 (`src/platform/storage.cpp` guards every
+localStorage access; `App::saveNow` logs the failure at **info** level, shows a one-time toast
+and keeps running) but nothing in CI or the release pipeline ever exercised it, so it was not
+**tested** — an evidence gap in the §3.4 sense.
+
+**DONE.** Added a `nostorage` script to `tools/browser/playtest.mjs`. It installs an
+`evaluateOnNewDocument` hook that makes `window.localStorage` throw `SecurityError` on property
+access — how a browser that denies storage actually behaves, rather than a stub that quietly
+succeeds — then plays, walks, pauses (pause writes a save, which is the failure path), and
+resumes. It asserts that storage really is blocked, so the scenario cannot silently prove
+nothing.
+
+Wired into two places:
+
+* **CI** (browser job) — a third playtest over HTTP.
+* **Release** (web job) — the same script against the **single-file HTML over `file://`**, which
+  is the exact combination §13 names.
+
+**Evidence (both run locally, headless Chromium + SwiftShader WebGL2):**
+
+| Target | storageBlocked | playing | paused | resumed | console errors | ok |
+|---|---|---|---|---|---|---|
+| web build over HTTP | true | playing | pause | playing | **0** | true |
+| single-file HTML over `file://` | true | playing | pause | playing | **0** | true |
+
+The console log shows the failure path was genuinely taken and that it is not an error:
+
+```
+[info] save (autosave): FAILED
+[info] save (pause): FAILED
+```
+
+That matters: the release gate is zero console errors, so had `App::saveNow` used `AAA_LOG_ERROR`
+this scenario would have failed the build instead of passing unnoticed.
+
+Committing this moves the PR head, so CI and the release dry run are re-queued.
+
+### #22 — 2026-10-08 — NOTE: sandbox recycle reset the git metadata; recovered, nothing lost
+
+**What happened.** The sandbox was recycled mid-session. It wiped `~/.cache` (the bootstrap
+toolchain and the pinned bgfx/SDL sources, as DESIGN_LOG #10 and #12 already warned) **and**
+left `.git` in the state of a fresh shallow clone of `main`: `HEAD` pointed at the base commit
+`d1d50c9`, `git reflog` contained only `clone` and one `checkout`, and `git cat-file -t 5c3680f`
+failed — the branch's commits were absent from the local object database. `git status` therefore
+reported the entire M1–M5 body of work as uncommitted modifications against `d1d50c9`.
+
+**No work was lost.** The working tree was intact, and every commit was already on the remote
+(the runners had built `5c3680f` and both workflows were green on it). Recovery, after copying
+the tree outside the repository as insurance:
+
+```bash
+git fetch origin arena/7ae554fb-aaa
+git reset --mixed origin/arena/7ae554fb-aaa    # moves HEAD and the index, leaves files alone
+git branch --set-upstream-to=origin/arena/7ae554fb-aaa arena/7ae554fb-aaa
+```
+
+Verified afterwards: `git log --oneline -1` → `5c3680f`, and a recursive `diff -r` between the
+repository and the backup was empty, i.e. the tree is byte-identical.
+
+**Recorded because it is easy to misread as catastrophe.** The dangerous move would have been to
+"commit" the apparent diff against `d1d50c9`, which would have collapsed 20 commits into one and
+rewritten the branch. The safe move is to fetch and reset, not to commit.
+
+**Also re-checked while here.** The Pages pipeline is correctly configured after all: the `web`
+job uploads a Pages artifact with `actions/upload-pages-artifact@v3` on `main` pushes, and the
+`pages` job deploys it with `actions/deploy-pages@v4` under `pages: write` / `id-token: write`
+and `continue-on-error: true`. I had suspected a missing artifact step; reading the job showed it
+was there. So enabling Pages in *Settings → Pages → Source: GitHub Actions* should be sufficient
+— that is inference from the configuration, not a verified deployment.
+
+**Completed in the same commit:** `CHANGELOG.md` now states the two limitations that were
+disclosed elsewhere but missing from it — the **Windows 10 floor** implied by the Universal CRT
+imports, and the `file://` localStorage caveat for the single-file build (with its `nostorage`
+regression test).
+
+### #23 — 2026-10-08 — DONE: harden the publish job — the one path no dry run ever executes
+
+`publish` is guarded by `(inputs.tag || github.ref_name) == 'v0.1.0'`, so **every dry run skips
+it**. It is gated to run exactly once, on the real release, which makes it the least-exercised
+code in the pipeline — and a failure there happens after the merge, in front of a published tag.
+
+**Bug found by reading it: a missing permission.** The job declared
+
+```yaml
+permissions:
+  contents: write
+```
+
+Declaring a `permissions:` block at all sets **every scope not named to `none`**. The download
+step uses `gh run download "$GITHUB_RUN_ID"`, which reads the run's artifacts and therefore needs
+`actions: read` — so the step would have failed with 403 and taken the release with it. Added
+`actions: read`, with a comment saying why so it is not "tidied away" later.
+
+**Three robustness changes.**
+
+1. `GH_TOKEN` on the download step (the other steps had it; this one did not).
+2. Assets are now **located by name with `find`** instead of by the fixed path
+   `dist/release-web/mistpine-…zip`. That path assumes `gh run download` extracts straight into
+   `--dir`; if the CLI ever nests an artifact-named directory, the old code uploads nothing and
+   fails. Locating them also doubles as an existence check with a clear message.
+3. **Size plausibility** (PROMPT §14.5 asks for "sizes are plausible"): every binary asset must
+   be at least 256 KiB and `SHA256SUMS.txt` at least 200 bytes, so a truncated or empty upload is
+   caught before it is published rather than after.
+
+**Evidence.** The rewritten step was extracted from the workflow and executed locally against
+synthetic artifact trees with `gh` replaced by a stub, under the same `bash -e` the runner uses:
+
+| Case | Expected | Result |
+|---|---|---|
+| flat extraction layout | create + upload 7 | pass |
+| nested extraction layout | create + upload 7 | pass |
+| one asset missing | fail "missing downloaded asset" | pass |
+| one asset 64 bytes | fail "implausibly small asset" | pass |
+| `SHA256SUMS.txt` 50 bytes | fail "implausible SHA256SUMS.txt" | pass |
+| release already exists | skip create, upload 7 | pass |
+
+All `run:` blocks in both workflows still pass `bash -n`, and both files parse.
+
+**Limitation, stated plainly:** this is **local simulation, not a runner execution**. The dry run
+cannot exercise it (the job is skipped for `v0.1.0-rc`), so the publish path's first real
+execution is the `v0.1.0` run after the merge. The simulation covers everything except GitHub's
+own behaviour — token scopes, artifact extraction and the release API.

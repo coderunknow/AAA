@@ -80,6 +80,8 @@ float Wildlife::update(const WildlifeContext& ctx, const World& world, std::vect
   }
 
   for (Wolf& w : wolves_) {
+    w.prevPos = w.pos;  // interpolation source for render-time smoothing
+    w.prevYaw = w.yaw;
     w.stateTime += dt;
     const Vec2 toPlayer = ctx.player.xz() - w.pos.xz();
     const float distPlayer = length(toPlayer);

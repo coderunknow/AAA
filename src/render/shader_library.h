@@ -14,6 +14,8 @@ class ShaderLibrary {
 
   // Returns BGFX_INVALID_HANDLE (and logs) if a binary is missing or invalid.
   bgfx::ProgramHandle program(const char* vs, const char* fs);
+  // Compiled-shader profile directory for the active backend, or nullptr when the
+  // backend has no profile (unsupported) — callers must fail clearly, not fall back.
   const char* profileDir() const;
   int loadedShaderCount() const { return static_cast<int>(shaders_.size()); }
   bool hadErrors() const { return errors_; }

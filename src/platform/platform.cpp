@@ -122,4 +122,24 @@ InputFrame Platform::takeInput() {
   return f;
 }
 
+Vec2 Platform::mousePositionPixels() const {
+  Vec2 p = input_.mousePosition();  // window coordinates
+  if (!window_) return p;
+  int ww = 0, wh = 0, pw = 0, ph = 0;
+  SDL_GetWindowSize(window_, &ww, &wh);
+  SDL_GetWindowSizeInPixels(window_, &pw, &ph);
+  if (ww > 0 && wh > 0 && pw > 0 && ph > 0) p = {p.x * static_cast<float>(pw) / ww, p.y * static_cast<float>(ph) / wh};
+  return p;
+}
+
+bool Platform::takeMouseClick() { return input_.takeClick(); }
+
+void Platform::setFullscreen(bool on) {
+  if (window_) SDL_SetWindowFullscreen(window_, on);
+}
+
+bool Platform::fullscreen() const {
+  return window_ && (SDL_GetWindowFlags(window_) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
 }  // namespace aaa

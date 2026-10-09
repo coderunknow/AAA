@@ -5,10 +5,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include "core/log.h"
 #include "game/game.h"
-#include "render/character_renderer.h"
+#include "render/skin_renderer.h"
 #include "render/frustum.h"
 #include "render/gpu_mesh.h"
 #include "render/prop_renderer.h"
@@ -16,11 +17,28 @@
 #include "render/terrain_renderer.h"
 #include "render/water_renderer.h"
 #include "render/object_renderer.h"
-#include "game/wolf_pose.h"
+#include "render/contact_shadow_renderer.h"
+#include "game/player_rig.h"
+#include "game/wolf_rig.h"
 
 namespace aaa {
 namespace {
-enum : bgfx::ViewId { kViewShadow0 = 0, kViewShadow1 = 1, kViewScene = 2, kViewPost = 3 };
+// View IDs double as execution order (all views are ViewMode::Sequential, which bgfx
+// executes in ascending ID order): shadows -> scene -> post effects -> tonemap -> UI.
+enum : bgfx::ViewId {
+  kViewShadow0 = 0,
+  kViewShadow1 = 1,
+  kViewScene = 2,
+  kViewBloomBright = 3,
+  kViewBloomBlurA = 4,
+  kViewBloomBlurB = 5,
+  kViewShafts = 6,
+  kViewSsao = 7,
+  kViewSsaoBlurA = 8,
+  kViewSsaoBlurB = 9,
+  kViewPost = 10,
+  kViewUi = 11
+};
 constexpr float kNear = 0.15f, kFar = 2400.0f;
 
 bx::Vec3 bv(Vec3 v) { return {v.x, v.y, v.z}; }
@@ -40,10 +58,13 @@ RenderSettings RenderSettings::preset(QualityPreset q) {
     case QualityPreset::Low:
       s.renderScale = 0.67f; s.shadowSize = 1024; s.shadowSplit = 22.0f; s.shadowFar = 110.0f;
       s.propDistance = 0.6f; s.grassDensity = 0.35f; s.terrainLod = 0.6f; s.textureQuality = 0;
+      s.bloom = false; s.shafts = false; s.ssao = false; s.fxaa = false; s.contactShadows = false;
       break;
     case QualityPreset::Medium:
       s.renderScale = 0.85f; s.shadowSize = 1536; s.shadowSplit = 26.0f; s.shadowFar = 140.0f;
       s.propDistance = 0.8f; s.grassDensity = 0.65f; s.terrainLod = 0.8f; s.textureQuality = 1;
+      s.bloomIterations = 1; s.bloomStrength = 0.45f;
+      s.shafts = false; s.ssao = false; s.fxaa = true; s.contactShadows = false;
       break;
     case QualityPreset::High:
       break;  // defaults (target: integrated laptop GPU class, e.g. Iris Xe / M1)
@@ -54,27 +75,93 @@ RenderSettings RenderSettings::preset(QualityPreset q) {
 Renderer::Renderer() = default;
 Renderer::~Renderer() { shutdown(); }
 
+namespace {
+// Maps a --renderer name to a bgfx backend. Returns Count for "" (auto).
+bgfx::RendererType::Enum parseRendererName(const std::string& s) {
+  if (s.empty() || s == "auto") return bgfx::RendererType::Count;
+  if (s == "noop") return bgfx::RendererType::Noop;
+  if (s == "d3d11" || s == "direct3d11") return bgfx::RendererType::Direct3D11;
+  if (s == "d3d12" || s == "direct3d12") return bgfx::RendererType::Direct3D12;
+  if (s == "metal") return bgfx::RendererType::Metal;
+  if (s == "vulkan") return bgfx::RendererType::Vulkan;
+  if (s == "opengl" || s == "gl") return bgfx::RendererType::OpenGL;
+  if (s == "opengles" || s == "gles" || s == "webgl") return bgfx::RendererType::OpenGLES;
+  return bgfx::RendererType::Count;
+}
+}  // namespace
+
 bool Renderer::init(const RendererInit& in) {
   init_ = in;
   quality_ = in.quality;
   settings_ = RenderSettings::preset(quality_);
-  bgfx::Init bi;
-  bi.type = in.noop ? bgfx::RendererType::Noop : bgfx::RendererType::Count;
+  // Deterministic single-threaded rendering: calling renderFrame() before init()
+  // latches bgfx onto the API thread (no internal render thread), so frame
+  // submission order is fully deterministic. Required by the release (PROMPT §8.3).
+  bgfx::renderFrame();
+  // Backend selection (PROMPT §8.2): an explicit --renderer wins; otherwise the
+  // platform preference chain is tried in order until bgfx::init succeeds.
+  std::vector<bgfx::RendererType::Enum> chain;
+  const bgfx::RendererType::Enum requested = parseRendererName(in.requestedRenderer);
+  if (in.noop) {
+    chain.push_back(bgfx::RendererType::Noop);
+  } else if (requested != bgfx::RendererType::Count) {
+    chain.push_back(requested);
 #if defined(__EMSCRIPTEN__)
-  if (!in.noop) bi.type = bgfx::RendererType::OpenGLES;  // WebGL2 (verified backend at runtime below)
+    chain.push_back(bgfx::RendererType::OpenGLES);  // WebGL2 fallback
+#else
+#if defined(_WIN32)
+    chain.push_back(bgfx::RendererType::Vulkan);
+    chain.push_back(bgfx::RendererType::OpenGL);
+#elif defined(__APPLE__)
+    chain.push_back(bgfx::RendererType::Metal);
+#else
+    chain.push_back(bgfx::RendererType::OpenGL);
+    chain.push_back(bgfx::RendererType::Vulkan);
 #endif
-  // This bgfx revision describes the main window as a SwapChain (nwh == NULL -> headless).
-  bi.swapChain.nwh = in.nativeWindow;
-  bi.swapChain.ndt = in.nativeDisplay;
-  bi.swapChain.width = in.width;
-  bi.swapChain.height = in.height;
-  bi.reset = settings_.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
-  bi.limits.maxTransientVbSize = 8u << 20;
-  bi.limits.maxTransientIbSize = 2u << 20;
-  if (!bgfx::init(bi)) {
-    AAA_LOG_ERROR("bgfx::init failed");
+#endif
+  } else {
+#if defined(__EMSCRIPTEN__)
+    chain.push_back(bgfx::RendererType::OpenGLES);  // WebGL2 (the web backend; never WebGPU)
+#elif defined(_WIN32)
+    chain.push_back(bgfx::RendererType::Direct3D11);
+    chain.push_back(bgfx::RendererType::Vulkan);
+    chain.push_back(bgfx::RendererType::OpenGL);
+#elif defined(__APPLE__)
+    chain.push_back(bgfx::RendererType::Metal);
+#else
+    chain.push_back(bgfx::RendererType::OpenGL);
+    chain.push_back(bgfx::RendererType::Vulkan);
+#endif
+  }
+  bgfx::RendererType::Enum selected = bgfx::RendererType::Count;
+  // Screenshot callback (PROMPT §9.8): writes --screenshot captures to PNG.
+  screenshotCb_.setListener([this](const std::string&, bool) { screenshotDone_ = true; });
+  for (size_t i = 0; i < chain.size(); ++i) {
+    bgfx::Init bi;
+    bi.type = chain[i];
+    bi.callback = &screenshotCb_;
+    // This bgfx revision describes the main window as a SwapChain (nwh == NULL -> headless).
+    bi.swapChain.nwh = in.nativeWindow;
+    bi.swapChain.ndt = in.nativeDisplay;
+    bi.swapChain.width = in.width;
+    bi.swapChain.height = in.height;
+    bi.reset = settings_.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE;
+    bi.limits.maxTransientVbSize = 8u << 20;
+    bi.limits.maxTransientIbSize = 2u << 20;
+    if (bgfx::init(bi)) {
+      selected = chain[i];
+      break;
+    }
+    AAA_LOG_WARN("bgfx::init failed for backend %s%s", bgfx::getRendererName(chain[i]),
+                 i + 1 < chain.size() ? ", trying the next candidate" : "");
+    bgfx::shutdown();
+  }
+  if (selected == bgfx::RendererType::Count) {
+    AAA_LOG_ERROR("bgfx::init failed for every candidate backend");
     return false;
   }
+  AAA_LOG_INFO("renderer backend: %s%s", bgfx::getRendererName(selected),
+               in.requestedRenderer.empty() ? " (platform default)" : " (requested)");
   initialised_ = true;
   width_ = in.width;
   height_ = in.height;
@@ -94,12 +181,40 @@ bool Renderer::init(const RendererInit& in) {
   if (!info_.shadowSampler) settings_.shadows = false;
 
   shaders_ = std::make_unique<ShaderLibrary>(in.assetRoot);
+  // Fail clearly when the compiled shader profile for the active backend is missing
+  // (PROMPT §8.1: no silent fallback to another profile).
+  if (!shaders_->profileDir()) {
+    AAA_LOG_ERROR("no compiled shader profile for backend %s — this backend is not supported by the build",
+                  info_.backend);
+    shaders_.reset();
+    bgfx::shutdown();
+    initialised_ = false;
+    return false;
+  }
+  if (!bgfx::isValid(shaders_->program("vs_fullscreen", "fs_sky"))) {
+    AAA_LOG_ERROR("shader binaries for profile '%s' not found under '%s' — rebuild the shader assets",
+                  shaders_->profileDir(), in.assetRoot.c_str());
+    shaders_.reset();
+    bgfx::shutdown();
+    initialised_ = false;
+    return false;
+  }
+  // The in-engine UI (SDF font atlas + program) initialises up-front so the loading
+  // screen works on native (no DOM) as well as web.
+  if (!ui_.init(*shaders_, in.assetRoot)) {
+    AAA_LOG_ERROR("in-engine UI initialisation failed (fonts under '%s')", in.assetRoot.c_str());
+    shaders_.reset();
+    bgfx::shutdown();
+    initialised_ = false;
+    return false;
+  }
   terrain_ = std::make_unique<TerrainRenderer>();
   props_ = std::make_unique<PropRenderer>();
-  character_ = std::make_unique<CharacterRenderer>();
+  skinned_ = std::make_unique<SkinRenderer>();
   water_ = std::make_unique<WaterRenderer>();
   objects_ = std::make_unique<ObjectRenderer>();
   fire_ = std::make_unique<FireRenderer>();
+  contact_ = std::make_unique<ContactShadowRenderer>();
 
   auto U = [](const char* n, bgfx::UniformType::Enum t = bgfx::UniformType::Vec4, uint16_t num = 1) {
     return bgfx::createUniform(n, t, num);
@@ -122,18 +237,71 @@ bool Renderer::init(const RendererInit& in) {
   u_.screenParams = U("u_screenParams");
   u_.post = U("u_post");
   u_.grade = U("u_grade");
+  u_.todGrade = U("u_todGrade");
   u_.sHdr = U("s_hdr", bgfx::UniformType::Sampler);
   u_.sShadow = U("s_shadowMap", bgfx::UniformType::Sampler);
+  // Post-effect chain (bloom / shafts / SSAO / FXAA) uniforms.
+  u_.bright = U("u_bright");
+  u_.blurDir = U("u_blurDir");
+  u_.sunScreen = U("u_sunScreen");
+  u_.texel = U("u_texel");
+  u_.effects = U("u_effects");
+  u_.ssaoProj = U("u_ssaoProj", bgfx::UniformType::Mat4);
+  u_.ssaoInvProj = U("u_ssaoInvProj", bgfx::UniformType::Mat4);
+  u_.ssaoParams = U("u_ssaoParams");
+  u_.kernel = bgfx::createUniform("u_kernel", bgfx::UniformType::Vec4, 16);
+  u_.sBloom = U("s_bloom", bgfx::UniformType::Sampler);
+  u_.sShafts = U("s_shafts", bgfx::UniformType::Sampler);
+  u_.sSsao = U("s_ssao", bgfx::UniformType::Sampler);
+  u_.sBlur = U("s_blur", bgfx::UniformType::Sampler);
+  u_.sDepth = U("s_depth", bgfx::UniformType::Sampler);
+  // Deterministic hemisphere kernel for SSAO (fixed LCG seed -- no runtime randomness).
+  // Uploaded every frame in submitPostEffects: bgfx uniform state does not survive
+  // bgfx::frame(), so setting it once here would be lost.
+  {
+    uint32_t seed = 1337u;
+    auto rnd = [&seed]() {
+      seed = seed * 1664525u + 1013904223u;
+      return static_cast<float>((seed >> 8) & 0xFFFFFF) / static_cast<float>(0x1000000);
+    };
+    for (int i = 0; i < 16; ++i) {
+      // Hemisphere around +Z (tangent space), clustered toward the origin.
+      const float scale = 0.1f + 0.9f * static_cast<float>(i * i) / 256.0f;
+      Vec3 dir{2.0f * rnd() - 1.0f, 2.0f * rnd() - 1.0f, rnd()};
+      dir = normalize(dir);
+      ssaoKernel_[i][0] = dir.x * scale;
+      ssaoKernel_[i][1] = dir.y * scale;
+      ssaoKernel_[i][2] = dir.z * scale;
+      ssaoKernel_[i][3] = 1.0f / 16.0f;
+    }
+  }
+  // 1x1 black stand-in bound wherever a disabled effect's target would be, so a
+  // sampler is never left unbound (bgfx logs/errors on missing texture bindings).
+  {
+    const uint32_t black = 0x000000ffu;
+    dummyTex_ = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8,
+                                      BGFX_TEXTURE_NONE | BGFX_SAMPLER_UVW_CLAMP | BGFX_SAMPLER_POINT,
+                                      bgfx::copy(&black, sizeof(black)));
+  }
 
   // Oversized triangle covering the screen.
   const float tri[9] = {-1.0f, -1.0f, 0.0f, 3.0f, -1.0f, 0.0f, -1.0f, 3.0f, 0.0f};
   fullscreenVb_ = bgfx::createVertexBuffer(bgfx::copy(tri, sizeof(tri)), terrainVertexLayout());
 
-  for (bgfx::ViewId v = 0; v <= kViewPost; ++v) bgfx::setViewMode(v, bgfx::ViewMode::Sequential);
+  for (bgfx::ViewId v = 0; v <= kViewUi; ++v) bgfx::setViewMode(v, bgfx::ViewMode::Sequential);
   bgfx::setViewName(kViewShadow0, "shadow near");
   bgfx::setViewName(kViewShadow1, "shadow far");
   bgfx::setViewName(kViewScene, "scene");
+  bgfx::setViewName(kViewBloomBright, "bloom bright");
+  bgfx::setViewName(kViewBloomBlurA, "bloom blur H");
+  bgfx::setViewName(kViewBloomBlurB, "bloom blur V");
+  bgfx::setViewName(kViewShafts, "sun shafts");
+  bgfx::setViewName(kViewSsao, "ssao");
+  bgfx::setViewName(kViewSsaoBlurA, "ssao blur H");
+  bgfx::setViewName(kViewSsaoBlurB, "ssao blur V");
   bgfx::setViewName(kViewPost, "post");
+  bgfx::setViewName(kViewUi, "ui");
+  ui_.resize(width_, height_);
   createTargets();
   return true;
 }
@@ -143,14 +311,21 @@ void Renderer::shutdown() {
   water_.reset();
   objects_.reset();
   fire_.reset();
-  character_.reset();
+  contact_.reset();
+  skinned_.reset();
   props_.reset();
   terrain_.reset();
+  ui_.shutdown();
   destroyTargets();
+  if (bgfx::isValid(dummyTex_)) bgfx::destroy(dummyTex_);
+  dummyTex_ = BGFX_INVALID_HANDLE;
   if (bgfx::isValid(fullscreenVb_)) bgfx::destroy(fullscreenVb_);
   for (bgfx::UniformHandle h : {u_.sunDir, u_.sunColor, u_.skyAmbient, u_.groundAmbient, u_.fogColor, u_.fogParams,
                                 u_.camPos, u_.wind, u_.shadowParams, u_.shadowMtx, u_.skyZenith, u_.skyHorizon,
-                                u_.invViewProjSky, u_.screenParams, u_.post, u_.grade, u_.sHdr, u_.sShadow})
+                                u_.invViewProjSky, u_.screenParams, u_.post, u_.grade, u_.todGrade, u_.sHdr, u_.sShadow,
+                                u_.bright,
+                                u_.blurDir, u_.sunScreen, u_.texel, u_.effects, u_.ssaoProj, u_.ssaoInvProj, u_.ssaoParams,
+                                u_.kernel, u_.sBloom, u_.sShafts, u_.sSsao, u_.sBlur, u_.sDepth})
     if (bgfx::isValid(h)) bgfx::destroy(h);
   shaders_.reset();
   bgfx::shutdown();
@@ -164,25 +339,99 @@ void Renderer::destroyTargets() {
   shadowFb_ = BGFX_INVALID_HANDLE;
   hdrColor_ = BGFX_INVALID_HANDLE;
   shadowTex_ = BGFX_INVALID_HANDLE;
+  depthTex_ = BGFX_INVALID_HANDLE;
+  for (int i = 0; i < 3; ++i) {
+    if (bgfx::isValid(bloomFb_[i])) bgfx::destroy(bloomFb_[i]);
+    if (bgfx::isValid(ssaoFb_[i])) bgfx::destroy(ssaoFb_[i]);
+    bloomFb_[i] = BGFX_INVALID_HANDLE;
+    ssaoFb_[i] = BGFX_INVALID_HANDLE;
+  }
+  bloomBright_ = BGFX_INVALID_HANDLE;
+  bloomBlur_[0] = bloomBlur_[1] = BGFX_INVALID_HANDLE;
+  shaftsTex_ = BGFX_INVALID_HANDLE;
+  ssaoRaw_ = BGFX_INVALID_HANDLE;
+  ssaoBlur_[0] = ssaoBlur_[1] = BGFX_INVALID_HANDLE;
+  if (bgfx::isValid(shaftsFb_)) bgfx::destroy(shaftsFb_);
+  shaftsFb_ = BGFX_INVALID_HANDLE;
 }
 
 void Renderer::createTargets() {
   destroyTargets();
   sceneW_ = std::max(1u, static_cast<uint32_t>(width_ * settings_.renderScale));
   sceneH_ = std::max(1u, static_cast<uint32_t>(height_ * settings_.renderScale));
+  fxW_ = std::max(1u, sceneW_ / 2);
+  fxH_ = std::max(1u, sceneH_ / 2);
   const uint64_t rtFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_UVW_CLAMP;
   const bgfx::TextureFormat::Enum colorFmt = info_.hdrTarget ? bgfx::TextureFormat::RGBA16F : bgfx::TextureFormat::RGBA8;
-  bgfx::TextureHandle hdr[2] = {
-      bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1, colorFmt, rtFlags),
-      bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1,
-                            bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT_WRITE_ONLY)};
-  hdrColor_ = hdr[0];
-  hdrFb_ = bgfx::createFrameBuffer(2, hdr, true);
+  const bgfx::Caps* caps = bgfx::getCaps();
+  // Pick a depth format that is both renderable and sampleable when the backend
+  // offers one (SSAO reconstructs view positions from it). Otherwise fall back to
+  // a write-only depth attachment and leave SSAO off.
+  depthSampleable_ = false;
+  bgfx::TextureFormat::Enum depthFmt = bgfx::TextureFormat::D24S8;
+  for (const bgfx::TextureFormat::Enum f :
+       {bgfx::TextureFormat::D24, bgfx::TextureFormat::D24S8, bgfx::TextureFormat::D32F}) {
+    const uint64_t bits = caps->formats[f];
+    if ((bits & BGFX_CAPS_FORMAT_TEXTURE_2D) != 0 && (bits & BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER) != 0) {
+      depthFmt = f;
+      depthSampleable_ = true;
+      break;
+    }
+  }
+  if (!depthSampleable_ && settings_.ssao) {
+    settings_.ssao = false;
+    AAA_LOG_INFO("SSAO disabled: no sampleable depth format on this backend");
+  }
+  // Scene colour + depth. The depth is point-sampled so it is never interpolated.
+  hdrColor_ = bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1, colorFmt,
+                                    rtFlags);
+  depthTex_ = bgfx::createTexture2D(static_cast<uint16_t>(sceneW_), static_cast<uint16_t>(sceneH_), false, 1, depthFmt,
+                                    depthSampleable_ ? (BGFX_TEXTURE_RT | BGFX_SAMPLER_UVW_CLAMP | BGFX_SAMPLER_POINT)
+                                                     : BGFX_TEXTURE_RT_WRITE_ONLY);
+  if (bgfx::isValid(hdrColor_) && bgfx::isValid(depthTex_)) {
+    bgfx::TextureHandle hdr[2] = {hdrColor_, depthTex_};
+    hdrFb_ = bgfx::createFrameBuffer(2, hdr, true);
+  } else {
+    hdrFb_ = BGFX_INVALID_HANDLE;
+  }
   if (settings_.shadows) {
     shadowTex_ = bgfx::createTexture2D(static_cast<uint16_t>(settings_.shadowSize * 2),
                                        static_cast<uint16_t>(settings_.shadowSize), false, 1, bgfx::TextureFormat::D16,
                                        BGFX_TEXTURE_RT | BGFX_SAMPLER_COMPARE_LEQUAL | BGFX_SAMPLER_UVW_CLAMP);
     shadowFb_ = bgfx::createFrameBuffer(1, &shadowTex_, true);
+  }
+  // --- bloom chain (half resolution, linear sampling so the tonemap upsample is smooth) ---
+  if (settings_.bloom && bgfx::isValid(hdrFb_)) {
+    bloomBright_ = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1, colorFmt,
+                                         rtFlags);
+    for (int i = 0; i < 2; ++i)
+      bloomBlur_[i] = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1,
+                                            colorFmt, rtFlags);
+    if (bgfx::isValid(bloomBright_) && bgfx::isValid(bloomBlur_[0]) && bgfx::isValid(bloomBlur_[1])) {
+      bloomFb_[0] = bgfx::createFrameBuffer(1, &bloomBright_, true);
+      bloomFb_[1] = bgfx::createFrameBuffer(1, &bloomBlur_[0], true);
+      bloomFb_[2] = bgfx::createFrameBuffer(1, &bloomBlur_[1], true);
+    }
+  }
+  // --- sun shafts (half resolution) ---
+  if (settings_.shafts && bgfx::isValid(bloomBright_)) {
+    shaftsTex_ = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1, colorFmt,
+                                       rtFlags);
+    if (bgfx::isValid(shaftsTex_)) shaftsFb_ = bgfx::createFrameBuffer(1, &shaftsTex_, true);
+  }
+  // --- SSAO (half resolution, single channel) ---
+  if (settings_.ssao && depthSampleable_ && bgfx::isValid(depthTex_)) {
+    const uint64_t aoFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_UVW_CLAMP;
+    ssaoRaw_ = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1,
+                                     bgfx::TextureFormat::R8, aoFlags);
+    for (int i = 0; i < 2; ++i)
+      ssaoBlur_[i] = bgfx::createTexture2D(static_cast<uint16_t>(fxW_), static_cast<uint16_t>(fxH_), false, 1,
+                                           bgfx::TextureFormat::R8, aoFlags);
+    if (bgfx::isValid(ssaoRaw_) && bgfx::isValid(ssaoBlur_[0]) && bgfx::isValid(ssaoBlur_[1])) {
+      ssaoFb_[0] = bgfx::createFrameBuffer(1, &ssaoRaw_, true);
+      ssaoFb_[1] = bgfx::createFrameBuffer(1, &ssaoBlur_[0], true);
+      ssaoFb_[2] = bgfx::createFrameBuffer(1, &ssaoBlur_[1], true);
+    }
   }
 }
 
@@ -190,6 +439,7 @@ void Renderer::resize(uint32_t w, uint32_t h) {
   if (!initialised_ || w == 0 || h == 0 || (w == width_ && h == height_)) return;
   width_ = w;
   height_ = h;
+  ui_.resize(w, h);
   if (init_.nativeWindow) {
     bgfx::SwapChain sc;
     sc.width = w;
@@ -197,6 +447,28 @@ void Renderer::resize(uint32_t w, uint32_t h) {
     bgfx::reset(settings_.vsync ? BGFX_RESET_VSYNC : BGFX_RESET_NONE, &sc);
   }
   createTargets();
+}
+
+void Renderer::frameStats(float& cpuMs, float& gpuMs, bool& gpuAvailable) const {
+  const bgfx::Stats* st = bgfx::getStats();
+  cpuMs = static_cast<float>(double(st->cpuTimeEnd - st->cpuTimeBegin) * 1000.0 / double(st->cpuTimerFreq));
+  // A backend can report a timer frequency without having measured anything (the
+  // Noop renderer does), so require a real sample before claiming GPU timings.
+  if (st->gpuTimerFreq > 0 && st->gpuTimeEnd > st->gpuTimeBegin) {
+    gpuMs = static_cast<float>(double(st->gpuTimeEnd - st->gpuTimeBegin) * 1000.0 / double(st->gpuTimerFreq));
+    gpuAvailable = true;
+  } else {
+    gpuMs = 0.0f;
+    gpuAvailable = false;
+  }
+}
+
+void Renderer::requestScreenshot(const std::string& path) {
+  if (!initialised_ || path.empty()) return;
+  screenshotDone_ = false;
+  // BGFX_INVALID_HANDLE = the default framebuffer (the OS window's backbuffer).
+  bgfx::requestScreenShot(BGFX_INVALID_HANDLE, path.c_str());
+  AAA_LOG_INFO("screenshot requested: %s", path.c_str());
 }
 
 void Renderer::setQuality(QualityPreset q) {
@@ -229,6 +501,10 @@ bool Renderer::loadStep(const Game& game, double budgetMs) {
     case 0:
       skyProg_ = shaders_->program("vs_fullscreen", "fs_sky");
       tonemapProg_ = shaders_->program("vs_fullscreen", "fs_tonemap");
+      brightProg_ = shaders_->program("vs_fullscreen", "fs_bloom_bright");
+      blurProg_ = shaders_->program("vs_fullscreen", "fs_blur");
+      shaftsProg_ = shaders_->program("vs_fullscreen", "fs_shafts");
+      ssaoProg_ = shaders_->program("vs_fullscreen", "fs_ssao");
       loadStage_ = 1;
       return false;
     case 1:
@@ -237,10 +513,16 @@ bool Renderer::loadStep(const Game& game, double budgetMs) {
     case 2:
       if (props_->initStep(*shaders_, budgetMs, settings_.textureQuality)) {
         terrain_->bindDetail(props_->detailSampler(), props_->detailTexture());
-        character_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
+        skinned_->init(*shaders_, props_->detailSampler(), props_->detailTexture(), 32);
+        // One GPU mesh per rig: the player and each wolf's body (generated once during
+        // loading, never per frame — PROMPT §10.2).
+        playerMesh_ = skinned_->upload(game.playerRig().mesh());
+        wolfMeshes_.clear();
+        for (const auto& rig : game.wolfRigs()) wolfMeshes_.push_back(skinned_->upload(rig->mesh()));
         water_->init(game.world(), *shaders_, props_->detailSampler(), props_->detailTexture());
         objects_->init(*shaders_, props_->detailSampler(), props_->detailTexture(), game.world());
         fire_->init(*shaders_, props_->detailSampler(), props_->detailTexture());
+        contact_->init(*shaders_);
         loadStage_ = 3;
         AAA_LOG_INFO("renderer ready: %d prop meshes, %d shaders, GPU memory ~%.1f MB meshes, %.1f MB textures",
                      props_->meshCount(), shaders_->loadedShaderCount(),
@@ -302,7 +584,7 @@ void Renderer::setFrameUniforms(const Game& game, const float* shadowMtx) {
   bgfx::setUniform(u_.fireColor, fcol);
 }
 
-void Renderer::render(const Game& game, float realDt) {
+void Renderer::render(const Game& game, float realDt, float interpAlpha) {
   if (!initialised_) return;
   ++frame_;
   time_ = static_cast<float>(game.simTime());
@@ -312,11 +594,12 @@ void Renderer::render(const Game& game, float realDt) {
   const bool originBL = caps->originBottomLeft;
 
   if (loadStage_ < 3 || !game.world().ready()) {
-    // Still loading: the HTML overlay covers the canvas; just keep presenting frames.
+    // Still loading: present the clear colour plus the in-engine loading screen.
     bgfx::setViewFrameBuffer(kViewPost, BGFX_INVALID_HANDLE);
     bgfx::setViewRect(kViewPost, 0, 0, static_cast<uint16_t>(width_), static_cast<uint16_t>(height_));
     bgfx::setViewClear(kViewPost, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x0b0e10ff, 1.0f, 0);
     bgfx::touch(kViewPost);
+    ui_.submit(kViewUi);  // loading screen (title, progress bar, stage)
     bgfx::setDebug(BGFX_DEBUG_NONE);
     bgfx::frame();
     return;
@@ -329,8 +612,8 @@ void Renderer::render(const Game& game, float realDt) {
   const float valleyFloor = lay.valleyFloorAt(game.world().fields().valleyParam(pp.x, pp.z));
   atm_ = evaluateAtmosphere({tod.sunDirection(), tod.hours(), valleyFloor});
 
-  // --- camera --------------------------------------------------------------------------------
-  const CameraView& cv = game.camera().view();
+  // --- camera (render-interpolated between the last two simulation states) -------------------
+  const CameraView cv = game.cameraView(interpAlpha);
   float view[16], proj[16], viewProj[16];
   bx::mtxLookAt(view, bv(cv.eye), bv(cv.target), {0.0f, 1.0f, 0.0f});
   const float aspect = static_cast<float>(sceneW_) / static_cast<float>(sceneH_);
@@ -340,6 +623,20 @@ void Renderer::render(const Game& game, float realDt) {
   frustum.fromViewProj(viewProj);
   const Vec3 fwd = normalize(cv.target - cv.eye);
   const Vec3 fwdFlat = normalize(Vec3{fwd.x, 0.0f, fwd.z} + Vec3{0.0f, 0.0f, 1e-4f});
+
+  // --- render interpolation (PROMPT §8.6) ----------------------------------------------------
+  // The simulation runs at a fixed 60 Hz. Skinned characters are interpolated by
+  // blending their joint palettes between the last two simulation steps, which keeps
+  // limbs smooth at any render frame rate; joint matrices already carry the
+  // character's world transform, so no rebasing is needed.
+  playerPalette_.clear();
+  wolfPalettes_.clear();
+  if (game.playerRig().mesh().triangleCount() > 0)
+    game.playerRig().fillSkinPalette(interpAlpha, playerPalette_);
+  for (const auto& rig : game.wolfRigs()) {
+    wolfPalettes_.emplace_back();
+    rig->fillSkinPalette(interpAlpha, wolfPalettes_.back());
+  }
 
   // --- shadow cascades -----------------------------------------------------------------------
   float shadowMtx[32];
@@ -380,17 +677,16 @@ void Renderer::render(const Game& game, float realDt) {
       if (c == 0) setFrameUniforms(game, shadowMtx);  // first submit of the frame (wind/time used by casters)
       terrain_->submitShadow(vid, center, radius, c == 0 ? 0 : 2, game.world());
       props_->submitShadow(vid, game.world(), center, radius, c == 0 ? 1 : 2, c == 1);
-      character_->submit(vid, game.animator().parts(), true);
       if (game.phase() != GamePhase::LoadingWorld) {
-        objects_->submit(vid, game, center, nullptr, true, time_);
-        if (c == 0) {
-          WolfPose pose;
-          for (const Wolf& w : game.wildlife().wolves()) {
-            if (length(w.pos - center) > radius) continue;
-            buildWolfPose(w, time_, pose);
-            character_->submit(vid, pose.data(), kWolfPartCount, true);
-          }
+        skinned_->submit(vid, playerMesh_, playerPalette_, true);
+        for (size_t wi = 0; wi < wolfPalettes_.size(); ++wi) {
+          const std::vector<Wolf>& wolves = game.wildlife().wolves();
+          if (wi >= wolves.size()) break;
+          if (length(wolves[wi].pos - center) > radius + 1.5f) continue;
+          if (wi >= wolfMeshes_.size()) break;
+          skinned_->submit(vid, wolfMeshes_[wi], wolfPalettes_[wi], true);
         }
+        objects_->submit(vid, game, center, nullptr, true, time_);
       }
     }
   } else {
@@ -409,15 +705,18 @@ void Renderer::render(const Game& game, float realDt) {
   setSceneShadowMap(u_.sShadow, shadowsOn ? shadowTex_ : bgfx::TextureHandle{bgfx::kInvalidHandle});
   terrain_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.terrainLod, 0);
   props_->submitScene(kViewScene, game.world(), cv.eye, frustum, settings_.propDistance, settings_.grassDensity);
-  if (game.phase() != GamePhase::LoadingWorld) character_->submit(kViewScene, game.animator().parts(), false);
+  // Short character contact shadows (M4.2, High only): under the characters, over the ground.
+  if (settings_.contactShadows && game.phase() != GamePhase::LoadingWorld)
+    contact_->submit(kViewScene, game, cv.eye, frustum);
   if (game.phase() != GamePhase::LoadingWorld) {
-    objects_->submit(kViewScene, game, cv.eye, &frustum, false, time_);
-    WolfPose pose;
-    for (const Wolf& w : game.wildlife().wolves()) {
-      if (lengthSq(w.pos - cv.eye) > 160.0f * 160.0f || !frustum.sphereVisible(w.pos + Vec3{0, 0.5f, 0}, 1.2f)) continue;
-      buildWolfPose(w, time_, pose);
-      character_->submit(kViewScene, pose.data(), kWolfPartCount, false);
+    skinned_->submit(kViewScene, playerMesh_, playerPalette_, false);
+    const std::vector<Wolf>& wolves = game.wildlife().wolves();
+    for (size_t wi = 0; wi < wolfPalettes_.size() && wi < wolfMeshes_.size() && wi < wolves.size(); ++wi) {
+      const Wolf& w = wolves[wi];
+      if (lengthSq(w.pos - cv.eye) > 170.0f * 170.0f || !frustum.sphereVisible(w.pos + Vec3{0, 0.5f, 0}, 1.4f)) continue;
+      skinned_->submit(kViewScene, wolfMeshes_[wi], wolfPalettes_[wi], false);
     }
+    objects_->submit(kViewScene, game, cv.eye, &frustum, false, time_);
   }
   water_->submit(kViewScene, frustum);  // translucent: after opaque geometry
 
@@ -440,6 +739,9 @@ void Renderer::render(const Game& game, float realDt) {
   // Additive flames after the sky (they write no depth, so the sky would overwrite them).
   if (game.phase() != GamePhase::LoadingWorld) fire_->submit(kViewScene, game, cv.eye, frustum);
 
+  // --- post-effect chain (bloom / shafts / SSAO) before tonemapping ---------------------------
+  submitPostEffects(cv, proj, viewProj, originBL, homDepth);
+
   // --- post: tonemap to the backbuffer -------------------------------------------------------
   bgfx::setViewFrameBuffer(kViewPost, BGFX_INVALID_HANDLE);
   bgfx::setViewRect(kViewPost, 0, 0, static_cast<uint16_t>(width_), static_cast<uint16_t>(height_));
@@ -447,13 +749,33 @@ void Renderer::render(const Game& game, float realDt) {
   {
     // Rest / collapse transitions fade the exposure to black.
     const float fade = 1.0f - game.screenFade();
-    const float post[4] = {atm_.exposure * fade * fade, 1.06f, 0.28f, 1.06f};
+    // Saturation/contrast come from the time-of-day grading presets (M4.1).
+    const float post[4] = {atm_.exposure * fade * fade, atm_.gradeSaturation, 0.28f, atm_.gradeContrast};
     const float grade[4] = {atm_.gradeHighlights.x, atm_.gradeHighlights.y, atm_.gradeHighlights.z, 0.12f};
+    const float todGrade[4] = {atm_.gradeTint.x, atm_.gradeTint.y, atm_.gradeTint.z, 0.0f};
     const float screen[4] = {originBL ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+    // Effect strengths (0 = off) and the SSAO floor (1 = off).
+    const float effects[4] = {
+        settings_.bloom && bgfx::isValid(bloomBlur_[1]) ? settings_.bloomStrength : 0.0f,
+        settings_.shafts && bgfx::isValid(shaftsTex_) ? settings_.shaftsStrength : 0.0f,
+        settings_.ssao && bgfx::isValid(ssaoBlur_[1]) ? 0.78f : 1.0f,
+        settings_.fxaa ? 1.0f : 0.0f};
+    const float texel[4] = {1.0f / static_cast<float>(sceneW_), 1.0f / static_cast<float>(sceneH_), 0.0f, 0.0f};
     bgfx::setUniform(u_.post, post);
     bgfx::setUniform(u_.grade, grade);
+    bgfx::setUniform(u_.todGrade, todGrade);
     bgfx::setUniform(u_.screenParams, screen);
+    bgfx::setUniform(u_.effects, effects);
+    bgfx::setUniform(u_.texel, texel);
     bgfx::setTexture(0, u_.sHdr, hdrColor_, BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(1, u_.sBloom,
+                     bgfx::isValid(bloomBlur_[1]) ? bloomBlur_[1]
+                                                  : (bgfx::isValid(bloomBright_) ? bloomBright_ : dummyTex_),
+                     BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(2, u_.sShafts, bgfx::isValid(shaftsTex_) ? shaftsTex_ : dummyTex_, BGFX_SAMPLER_UVW_CLAMP);
+    bgfx::setTexture(3, u_.sSsao,
+                     bgfx::isValid(ssaoBlur_[1]) ? ssaoBlur_[1] : (bgfx::isValid(ssaoRaw_) ? ssaoRaw_ : dummyTex_),
+                     BGFX_SAMPLER_UVW_CLAMP);
     bgfx::setVertexBuffer(0, fullscreenVb_);
     // Write alpha too: the browser composites the WebGL canvas with its alpha channel, so an
     // RGB-only write leaves the canvas fully transparent (only the page background shows).
@@ -462,8 +784,87 @@ void Renderer::render(const Game& game, float realDt) {
     else bgfx::touch(kViewPost);
   }
 
+  // In-engine UI (menus / HUD / toasts) on top of the tonemapped image.
+  ui_.submit(kViewUi);
+
   drawDebug(game, realDt);
   bgfx::frame();
+}
+
+void Renderer::submitFullscreen(bgfx::ViewId view, bgfx::FrameBufferHandle fb, uint32_t w, uint32_t h,
+                                bgfx::ProgramHandle prog, bgfx::UniformHandle sampler, bgfx::TextureHandle src,
+                                uint64_t samplerFlags) {
+  if (!bgfx::isValid(fb) || !bgfx::isValid(prog)) return;
+  bgfx::setViewFrameBuffer(view, fb);
+  bgfx::setViewRect(view, 0, 0, static_cast<uint16_t>(w), static_cast<uint16_t>(h));
+  bgfx::setViewClear(view, BGFX_CLEAR_COLOR, 0x000000ff, 1.0f, 0);
+  bgfx::setTexture(0, sampler, bgfx::isValid(src) ? src : dummyTex_, samplerFlags);
+  bgfx::setVertexBuffer(0, fullscreenVb_);
+  bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+  bgfx::submit(view, prog);
+}
+
+// Bloom, sun shafts and SSAO: all half-resolution, all quality-gated, each with a
+// capability fallback (the target handles are only valid when the effect can run).
+void Renderer::submitPostEffects(const CameraView& cv, const float* proj, const float* viewProj, bool originBL,
+                                 bool homDepth) {
+  const float screen[4] = {originBL ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+  bgfx::setUniform(u_.screenParams, screen);
+  const float texel[4] = {1.0f / static_cast<float>(fxW_), 1.0f / static_cast<float>(fxH_), 0.0f, 0.0f};
+  bgfx::setUniform(u_.texel, texel);
+  const uint64_t linearFlags = BGFX_SAMPLER_UVW_CLAMP;
+  const uint64_t pointFlags = BGFX_SAMPLER_UVW_CLAMP | BGFX_SAMPLER_POINT;
+  const float hDir[4] = {1.0f / static_cast<float>(fxW_), 0.0f, 0.0f, 0.0f};
+  const float vDir[4] = {0.0f, 1.0f / static_cast<float>(fxH_), 0.0f, 0.0f};
+
+  // --- bloom: soft-knee bright pass, then separable gaussian iterations ---------------------
+  if (settings_.bloom && bgfx::isValid(bloomFb_[0]) && bgfx::isValid(bloomFb_[2])) {
+    const float bright[4] = {settings_.bloomThreshold, 0.6f, 1.0f, 0.0f};
+    bgfx::setUniform(u_.bright, bright);
+    submitFullscreen(kViewBloomBright, bloomFb_[0], fxW_, fxH_, brightProg_, u_.sHdr, hdrColor_, linearFlags);
+    bgfx::TextureHandle src = bloomBright_;
+    const int iterations = std::clamp(settings_.bloomIterations, 1, 2);
+    for (int iter = 0; iter < iterations; ++iter) {
+      bgfx::setUniform(u_.blurDir, hDir);
+      submitFullscreen(kViewBloomBlurA, bloomFb_[1], fxW_, fxH_, blurProg_, u_.sBlur, src, linearFlags);
+      bgfx::setUniform(u_.blurDir, vDir);
+      submitFullscreen(kViewBloomBlurB, bloomFb_[2], fxW_, fxH_, blurProg_, u_.sBlur, bloomBlur_[0], linearFlags);
+      src = bloomBlur_[1];
+    }
+  }
+
+  // --- sun shafts: radial blur of the bright pass towards the sun's screen position ---------
+  if (settings_.shafts && bgfx::isValid(shaftsFb_) && bgfx::isValid(bloomBright_)) {
+    const Vec3 sunFar = cv.eye + atm_.lightDir * 1000.0f;
+    const float w = viewProj[3] * sunFar.x + viewProj[7] * sunFar.y + viewProj[11] * sunFar.z + viewProj[15];
+    float sunU = 0.5f, sunV = 0.5f, vis = 0.0f;
+    if (w > 0.01f) {
+      const float ndcX = (viewProj[0] * sunFar.x + viewProj[4] * sunFar.y + viewProj[8] * sunFar.z + viewProj[12]) / w;
+      const float ndcY = (viewProj[1] * sunFar.x + viewProj[5] * sunFar.y + viewProj[9] * sunFar.z + viewProj[13]) / w;
+      sunU = clampf(ndcX * 0.5f + 0.5f, 0.0f, 1.0f);
+      sunV = clampf(originBL ? ndcY * 0.5f + 0.5f : 0.5f - ndcY * 0.5f, 0.0f, 1.0f);
+      vis = 1.0f;
+    }
+    const float sun[4] = {sunU, sunV, vis, static_cast<float>(settings_.shaftTaps)};
+    bgfx::setUniform(u_.sunScreen, sun);
+    submitFullscreen(kViewShafts, shaftsFb_, fxW_, fxH_, shaftsProg_, u_.sBlur, bloomBright_, linearFlags);
+  }
+
+  // --- SSAO: depth-based hemisphere occlusion, then a separable blur ------------------------
+  if (settings_.ssao && bgfx::isValid(ssaoFb_[0]) && bgfx::isValid(ssaoFb_[2]) && bgfx::isValid(depthTex_)) {
+    float invProj[16];
+    bx::mtxInverse(invProj, proj);
+    bgfx::setUniform(u_.ssaoProj, proj);
+    bgfx::setUniform(u_.ssaoInvProj, invProj);
+    bgfx::setUniform(u_.kernel, ssaoKernel_, 16);
+    const float params[4] = {settings_.ssaoRadius, 0.02f, settings_.ssaoIntensity, homDepth ? 1.0f : 0.0f};
+    bgfx::setUniform(u_.ssaoParams, params);
+    submitFullscreen(kViewSsao, ssaoFb_[0], fxW_, fxH_, ssaoProg_, u_.sDepth, depthTex_, pointFlags);
+    bgfx::setUniform(u_.blurDir, hDir);
+    submitFullscreen(kViewSsaoBlurA, ssaoFb_[1], fxW_, fxH_, blurProg_, u_.sBlur, ssaoRaw_, linearFlags);
+    bgfx::setUniform(u_.blurDir, vDir);
+    submitFullscreen(kViewSsaoBlurB, ssaoFb_[2], fxW_, fxH_, blurProg_, u_.sBlur, ssaoBlur_[0], linearFlags);
+  }
 }
 
 void Renderer::drawDebug(const Game& game, float realDt) {

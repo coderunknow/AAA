@@ -45,9 +45,18 @@ jobs:
           name: shaderc
           path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
       - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
-      - run: cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON
-      - run: cmake --build --preset native-headless
-      - run: ctest --preset native-headless
+      - name: Configure native-headless
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "native-headless configure failed"; exit 1; }
+      - name: Build native-headless
+        run: |
+          cmake --build --preset native-headless > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "native-headless build failed"; exit 1; }
+      - name: Test native-headless
+        run: |
+          ctest --preset native-headless > /tmp/ctest.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/ctest.log "native-headless ctest failed"; exit 1; }
 
   native-windowed:
     name: Native windowed build (compile + link)
@@ -55,14 +64,22 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libgl-dev libasound2-dev libpulse-dev
+      # SDL3's X11 checks are fatal when these are missing (XTEST/XFIXES/XRENDER are
+      # on by default), so the windowed job needs the full X11 dev set.
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev libxfixes-dev libxrender-dev libgl-dev libegl-dev libasound2-dev libpulse-dev
       - uses: actions/download-artifact@v4
         with:
           name: shaderc
           path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
       - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
-      - run: cmake --preset native-dev -DAAA_BUILD_TESTS=OFF
-      - run: cmake --build --preset native-dev
+      - name: Configure native-dev
+        run: |
+          cmake --preset native-dev -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "native-dev configure failed"; exit 1; }
+      - name: Build native-dev
+        run: |
+          cmake --build --preset native-dev > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "native-dev build failed"; exit 1; }
 
   web:
     name: WebAssembly release
@@ -79,8 +96,14 @@ jobs:
           name: shaderc
           path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
       - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
-      - run: EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release
-      - run: cmake --build --preset web-release
+      - name: Configure web-release
+        run: |
+          EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "web-release configure failed"; exit 1; }
+      - name: Build web-release
+        run: |
+          cmake --build --preset web-release > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "web-release build failed"; exit 1; }
       - name: Collect site
         run: |
           mkdir -p site
@@ -112,3 +135,155 @@ jobs:
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4
+
+  browser:
+    name: Browser playtest (web build, headless Chromium)
+    needs: web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: mistpine-web
+          path: site
+      # Chromium system libraries (the bundled @sparticuz/chromium needs these).
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libnspr4 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libatk1.0-0 libatk-bridge2.0-0 libcups2 libasound2 ||
+          sudo apt-get install -y libnss3 libnspr4 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libasound2t64
+      - run: cd tools/browser && npm ci --no-audit --no-fund
+      - name: Playtest (default script)
+        run: |
+          cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-default \
+            --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/playtest.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/playtest.log "browser playtest (default) failed"; exit 1; }
+      - name: "Playtest (persist script: save round trip)"
+        run: |
+          cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-persist \
+            --query "hours=9&quality=low" --script persist --width 960 --height 540 > /tmp/playtest2.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/playtest2.log "browser playtest (persist) failed"; exit 1; }
+      - name: "Playtest (nostorage script: persistence unavailable)"
+        run: |
+          # PROMPT 13: the web build must stay playable when persistence is
+          # unavailable. The harness makes window.localStorage throw the way a
+          # browser that denies storage does, then plays, pauses (which writes a
+          # save) and resumes. Any console error fails the run, so this also
+          # asserts the failure is not reported at ERROR level.
+          cd tools/browser && node playtest.mjs --dir ../../site --out ../../qa/ci-nostorage \
+            --query "hours=9&quality=low" --script nostorage --width 960 --height 540 > /tmp/playtest3.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/playtest3.log "browser playtest (nostorage) failed"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-browser
+          path: qa/
+
+  sanitizers:
+    name: "Sanitizers (ASan + UBSan: unit tests + smoke runs)"
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/download-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
+      - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+      - name: Configure (ASan + UBSan)
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SANITIZERS=ON > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "sanitizers configure failed"; exit 1; }
+      - name: Build
+        run: |
+          cmake --build --preset native-headless > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "sanitizers build failed"; exit 1; }
+      - name: Test
+        run: |
+          ctest --preset native-headless > /tmp/ctest.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/ctest.log "sanitizers ctest failed"; exit 1; }
+
+  shader-profiles:
+    name: Shader profiles (essl, glsl, spirv, metal)
+    needs: tools
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - uses: actions/download-artifact@v4
+        with:
+          name: shaderc
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx
+      - run: chmod +x build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc
+      - name: Compile every profile the Linux shaderc can emit
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SHADER_PROFILE_SET=host-all > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "shader-profiles configure failed"; exit 1; }
+          cmake --build --preset native-headless --target aaa_shaders > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "shader compilation failed"; exit 1; }
+          ls build/native-headless/assets/shaders/
+
+  shader-profiles-windows:
+    name: Shader profiles (dx11 on a Windows shaderc)
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      # The pinned Linux shaderc cannot emit SM 5.0 (no D3DCompiler support), so the
+      # dx11 profile is compiled with a shaderc built on Windows (PROMPT §8.1).
+      - name: Configure (fetches bgfx; its src tree is also the shader include path)
+        run: cmake --preset tools -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc.exe
+          # v2: include the workflow + presets in the key so a toolchain/config
+          # change can never resurrect a stale cached binary.
+          key: shaderc-win-v2-${{ hashFiles('cmake/Dependencies.cmake', 'CMakePresets.json', '.github/workflows/ci.yml') }}
+      - name: Build shaderc (MSVC, static CRT)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          # Static CRT: the tool must run anywhere on the runner without hunting for
+          # vcruntime/msvcp DLLs (a missing/mismatched CRT DLL crashes it at startup).
+          cmake --build --preset tools --target shaderc
+      - name: Smoke-test the Windows shaderc (spirv + dx11)
+        run: |
+          SHADERC="build/tools/_deps/bgfx_cmake-build/cmake/bgfx/shaderc.exe"
+          BGXSRC="build/tools/_deps/bgfx_cmake-src/bgfx/src"
+          LOG=/tmp/smoke.log
+          : > "$LOG"
+          ls -la "$SHADERC" >> "$LOG" 2>&1 || echo "shaderc.exe MISSING at $SHADERC" >> "$LOG"
+          # dumpbin note: the switch is spelled //dependents — MSYS bash rewrites a
+          # leading-slash argument ("/dependents") into a Windows path otherwise.
+          DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe 2>/dev/null | tail -1)
+          if [ -n "${DUMPBIN:-}" ]; then "$DUMPBIN" //dependents "$SHADERC" >> "$LOG" 2>&1 || true; fi
+          # Startup probe: prints the tool version and proves the exe starts at all
+          # (a missing-DLL or corrupt binary dies here, with its real exit code).
+          "$SHADERC" --version >> "$LOG" 2>&1
+          echo "version exit: $?" >> "$LOG"
+          mkdir -p /tmp/smoke
+          "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.spirv.bin --type vertex --platform linux -p spirv \
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> "$LOG" 2>&1
+          spirv_rc=$?
+          echo "spirv exit: $spirv_rc" >> "$LOG"
+          "$SHADERC" -f shaders/vs_fullscreen.sc -o /tmp/smoke/vs.dx11.bin --type vertex --platform windows -p s_5_0 \
+            --varyingdef shaders/varying.def.sc -i shaders -i "$BGXSRC" >> "$LOG" 2>&1
+          dx11_rc=$?
+          echo "dx11 exit: $dx11_rc" >> "$LOG"
+          cat "$LOG"
+          if [ "$spirv_rc" -ne 0 ] || [ "$dx11_rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "windows shaderc smoke test failed"
+            exit 1
+          fi
+      - name: Compile the Windows profile set (dx11, spirv, glsl)
+        run: |
+          cmake --preset native-dev -DAAA_BUILD_TESTS=OFF -DAAA_SHADER_PROFILE_SET=windows > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "windows shader-profiles configure failed"; exit 1; }
+          cmake --build --preset native-dev --target aaa_shaders > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "windows shader compilation failed"; exit 1; }
+          ls build/native-dev/assets/shaders/

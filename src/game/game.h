@@ -18,6 +18,9 @@
 
 namespace aaa {
 
+class PlayerRig;
+class WolfRig;
+
 enum class GamePhase { LoadingWorld, Playing, Paused };
 
 struct GameConfig {
@@ -44,9 +47,15 @@ struct GameEvent {
 // A short scripted fade used for resting and collapsing.
 enum class Transition : uint8_t { None, RestOut, RestIn, CollapseOut, CollapseIn };
 
+// Animation gesture hint: the last interaction the player performed, so the skinned
+// animator can play the matching short pose (gather, drink, fire, eat, rest). This is
+// animation plumbing only — it adds no gameplay rule (PROMPT §10.8).
+enum class PlayerGesture : uint8_t { None, Gather, Drink, Fire, Eat, Rest };
+
 class Game {
  public:
   explicit Game(const GameConfig& config = {});
+  ~Game();  // defined in game.cpp: the rigs are incomplete types here
 
   // Advances loading (bounded by budgetMs) or the simulation.
   void update(float dt, const InputFrame& input, double loadBudgetMs = 12.0);
@@ -60,8 +69,16 @@ class Game {
   const PlayerController& player() const { return player_; }
   const ThirdPersonCamera& camera() const { return camera_; }
   ThirdPersonCamera& camera() { return camera_; }
+  // Render-interpolated camera view between the last two simulation states.
+  CameraView cameraView(float alpha) const { return camera_.view(alpha); }
   const CharacterAnimator& animator() const { return animator_; }
   CharacterAnimator& animator() { return animator_; }
+  // Procedural skinned rigs (PROMPT §10): the player rig and every wolf's rig.
+  const PlayerRig& playerRig() const { return *playerRig_; }
+  // Wolf poses for the renderer: fixed-size vector aligned with wildlife().wolves().
+  const std::vector<std::unique_ptr<WolfRig>>& wolfRigs() const { return wolfRigs_; }
+  // Quality level (0..2) the rigs were generated for; changing it rebuilds them.
+  void setRigQuality(int q);
   TimeOfDay& timeOfDay() { return time_; }
   const TimeOfDay& timeOfDay() const { return time_; }
   double simTime() const { return simTime_; }
@@ -77,6 +94,10 @@ class Game {
   // 0 = clear view, 1 = black (rest / collapse transitions).
   float screenFade() const { return fade_; }
   float fireHeat() const { return fireHeat_; }
+  // Animation hint: the most recent interaction and how long ago it started (s).
+  PlayerGesture gesture() const { return gesture_; }
+  float gestureAge() const { return gestureAge_; }
+  bool inTransition() const { return transition_ != Transition::None; }
 
   std::vector<GameEvent>& events() { return events_; }
 
@@ -84,6 +105,8 @@ class Game {
   void setPendingSave(const SaveData& d) { pendingSave_ = d; hasPendingSave_ = true; }
   SaveData makeSave() const;
   bool startedFromSave() const { return startedFromSave_; }
+  // "Start a new journey": fresh survival/spawn/forage in the same world (same seed).
+  void restartJourney();
 
   // Visual-QA scenarios (query string ?qa=...): "camp", "shrine", "wolves". Returns false if unknown.
   bool applyScenario(const std::string& name);
@@ -97,6 +120,8 @@ class Game {
   void startPlaying();
   void applySave(const SaveData& d);
   void updateInteraction(const InputFrame& input);
+  void updateRigs(float dt);
+  Vec3 game_camera_forward() const;
   void updateFires(float dt);
   void updateTransition(float dt);
   bool tryBuildFire();
@@ -108,6 +133,9 @@ class Game {
   PlayerController player_;
   ThirdPersonCamera camera_;
   CharacterAnimator animator_;
+  std::unique_ptr<PlayerRig> playerRig_;
+  std::vector<std::unique_ptr<WolfRig>> wolfRigs_;
+  int rigQuality_ = 2;
   TimeOfDay time_;
   GamePhase phase_ = GamePhase::LoadingWorld;
   double simTime_ = 0.0;
@@ -124,6 +152,8 @@ class Game {
   bool hasRestPoint_ = false;
   int day_ = 1;
   float fireHeat_ = 0.0f;
+  PlayerGesture gesture_ = PlayerGesture::None;
+  float gestureAge_ = 0.0f;
   float drinkCooldown_ = 0.0f;
   float hintTimer_ = 0.0f;
   int hintStage_ = 0;

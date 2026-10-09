@@ -101,6 +101,11 @@ PropMesh makeMountainPine(uint32_t seed, int lod) {
       if (lod < 2)
         addCard(out.foliage, c + Vec3{0, 0.15f * r, 0}, ax * 0.9f, Vec3{0, 0.42f * r, 0} + az * 0.25f, FoliageTile::PineNeedles,
                 outward, ao * 0.75f, ao, 0.6f, 1.0f, phase);
+      // ... and a crossed horizontal pad (M4.3) so the crown reads fuller from directly
+      // below instead of as sparse flat cards.
+      if (lod == 0)
+        addCard(out.foliage, c + Vec3{0, -0.10f * r, 0}, az, ax * 0.85f + Vec3{0, 0.10f * r, 0},
+                FoliageTile::PineNeedles, outward, ao * 0.8f, ao, 0.6f, 1.0f, phase);
     }
   }
   // Crown cap so the top reads as a dense mass.

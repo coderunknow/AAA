@@ -1,0 +1,747 @@
+name: release
+
+# -----------------------------------------------------------------------------
+# Mistpine release pipeline (PROMPT §9, §14.2).
+#
+# Builds every release asset from an explicit commit SHA, runs the runner-side
+# validation for each package (dependency audit + packaged-binary smoke test from
+# a foreign working directory + render verification where the runner allows it),
+# runs browser QA on the web build and the single-file HTML (file://), and
+# produces SHA256SUMS.txt.
+#
+# Dry run (default): pass tag=v0.1.0-rc (or any non-v0.1.0 tag) — every build and
+# check runs exactly as for a real release, but nothing is published and no
+# release assets are attached to a GitHub release. Run it against the PR head
+# before merge.
+#
+# Real release: pass tag=v0.1.0 and sha=<merge-sha> — additionally creates the
+# draft GitHub release v0.1.0 and uploads all assets (verification per §14.5).
+#
+#   gh workflow run release.yml -f tag=v0.1.0-rc -f sha=<pr-head-sha>   # dry run
+#   gh workflow run release.yml -f tag=v0.1.0    -f sha=<merge-sha>      # real
+# -----------------------------------------------------------------------------
+
+on:
+  # Dry run / real release by pushing a tag (v0.1.0-rc for a dry run, v0.1.0 to publish).
+  # Tag pushes always use this workflow file from the pushed ref, so a dry run can be
+  # started before merge, and the real release after it.
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag. v0.1.0 publishes (draft release + assets); any other value (e.g. v0.1.0-rc) is a full dry run."
+        required: true
+        default: "v0.1.0-rc"
+      sha:
+        description: "Commit SHA to build (empty = the ref the workflow was dispatched on)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  EMSDK_VERSION: 4.0.11
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Web: normal web build (zip for a static host) + single-file HTML (file://),
+  # plus browser QA on both (PROMPT §9.1, §9.9).
+  # ---------------------------------------------------------------------------
+  web:
+    name: Web release + single-file + browser QA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - name: Version
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "DRY_RUN=$([ "$TAG" = "v0.1.0" ] && echo false || echo true)" >> "$GITHUB_ENV"
+          echo "tag=$TAG version=$VERSION dry_run=$DRY_RUN"
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build zip
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+      - name: Host tools (shaderc)
+        run: |
+          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
+      - name: Configure web-release
+        run: |
+          EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-release > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "web-release configure failed"; exit 1; }
+      - name: Build web-release
+        run: |
+          cmake --build --preset web-release > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "web-release build failed"; exit 1; }
+      - name: Package web zip
+        run: |
+          mkdir -p "pkg/mistpine"
+          cp build/web-release/src/app/index.html build/web-release/src/app/index.js \
+             build/web-release/src/app/index.wasm build/web-release/src/app/index.data "pkg/mistpine/"
+          (cd pkg && zip -r "../mistpine-v${VERSION}-web.zip" mistpine)
+          ls -la "mistpine-v${VERSION}-web.zip"
+      - name: Configure web-singlefile
+        run: |
+          EMSCRIPTEN_ROOT="$EMSDK/upstream/emscripten" cmake --preset web-singlefile > /tmp/cfg2.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg2.log "web-singlefile configure failed"; exit 1; }
+      - name: Build web-singlefile
+        run: |
+          cmake --build --preset web-singlefile > /tmp/build2.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build2.log "web-singlefile build failed"; exit 1; }
+          ls -la build/web-singlefile/src/app/
+      - name: Collect single-file HTML
+        run: |
+          cp build/web-singlefile/src/app/mistpine-singlefile.html "./mistpine-v${VERSION}-web-singlefile.html"
+          # A single-file build must not reference any external file.
+          if grep -qE 'src="index\.(js|wasm)"|href="index\.(js|wasm|data)"' "./mistpine-v${VERSION}-web-singlefile.html"; then
+            echo "single-file HTML still references an external file" >&2; exit 1
+          fi
+          ls -la "mistpine-v${VERSION}-web-singlefile.html"
+      # Browser QA: normal web build over HTTP, then the single-file HTML via file://.
+      - run: |
+          sudo apt-get install -y libnss3 libnspr4 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libatk1.0-0 libatk-bridge2.0-0 libcups2 libasound2 ||
+          sudo apt-get install -y libnss3 libnspr4 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libasound2t64
+      - run: cd tools/browser && npm ci --no-audit --no-fund
+      - name: Browser QA (web build over HTTP)
+        run: |
+          cd tools/browser && node playtest.mjs --dir ../../pkg/mistpine --out ../../qa/release-web \
+            --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/qa1.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/qa1.log "release browser QA (web over HTTP) failed"; exit 1; }
+      - name: Browser QA (single-file HTML over file://)
+        run: |
+          cd tools/browser && node playtest.mjs --file "../../mistpine-v${VERSION}-web-singlefile.html" \
+            --out ../../qa/release-singlefile --query "hours=9&quality=low" --script default --width 960 --height 540 > /tmp/qa2.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/qa2.log "release browser QA (single-file over file://) failed"; exit 1; }
+      - name: Browser QA (single-file HTML over file://, persistence unavailable)
+        run: |
+          # PROMPT 13 lists "remain playable if persistence is unavailable" as a
+          # requirement of the single-file build specifically, so exercise that
+          # combination directly: file://, no server, storage denied.
+          cd tools/browser && node playtest.mjs --file "../../mistpine-v${VERSION}-web-singlefile.html" \
+            --out ../../qa/release-singlefile-nostorage --query "hours=9&quality=low" --script nostorage --width 960 --height 540 > /tmp/qa3.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/qa3.log "release browser QA (single-file over file://, no storage) failed"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-web
+          path: mistpine-v${{ env.VERSION }}-web.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-web-singlefile
+          path: mistpine-v${{ env.VERSION }}-web-singlefile.html
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-release-web
+          path: qa/
+
+  # ---------------------------------------------------------------------------
+  # Shader assets for platforms whose runner cannot build the pinned bgfx
+  # shaderc. Dawn's tint (linked by shaderc, but only used for WGSL/WebGPU,
+  # which this project never uses) does not compile with the libc++ on the
+  # current macOS runners. A Linux shaderc emits every profile we need except
+  # dx11, so macOS consumes this artifact with -DAAA_SKIP_SHADER_COMPILE=ON
+  # instead of building the tool.
+  # ---------------------------------------------------------------------------
+  shader-assets:
+    name: Shader assets (Linux shaderc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Host tools (shaderc)
+        run: |
+          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
+      - name: Compile every profile the Linux shaderc can emit
+        run: |
+          cmake --preset native-headless -DSDL_UNIX_CONSOLE_BUILD=ON -DAAA_SHADER_PROFILE_SET=host-all > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "shader-assets configure failed"; exit 1; }
+          cmake --build --preset native-headless --target aaa_shaders > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "shader-assets compilation failed"; exit 1; }
+          ls build/native-headless/assets/shaders/
+          # The metal profile is what macOS needs; assert it is really there.
+          test -d build/native-headless/assets/shaders/metal || { echo "metal shader profile missing" >&2; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shader-assets
+          path: build/native-headless/assets/shaders/
+
+  # ---------------------------------------------------------------------------
+  # Windows x64: MSVC, static CRT, D3D11 primary. Portable zip: unzip -> run.
+  # ---------------------------------------------------------------------------
+  windows:
+    name: Windows x64 package
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - name: Version
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Host tools (shaderc, MSVC — also emits the dx11 shader profile)
+        run: |
+          # Static CRT: the tool must run anywhere on the runner without hunting for
+          # vcruntime/msvcp DLLs (a missing/mismatched CRT DLL crashes it at startup).
+          cmake --preset tools -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
+      - name: Configure native-release
+        run: |
+          cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "windows configure failed"; exit 1; }
+      - name: Compile shaders (separate step)
+        run: |
+          # Compiled as its own target first: the dx11 profile needs the Windows
+          # shaderc, which loads d3dcompiler at run time; doing this before the
+          # full (fully parallel) build keeps that load out of a heavily loaded
+          # build and makes a shader failure point at the shader, not the link.
+          cmake --build --preset native-release --target aaa_shaders > /tmp/shaders.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/shaders.log "windows shader compilation failed"; exit 1; }
+      - name: Build native-release
+        run: |
+          cmake --build --preset native-release > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "windows build failed"; exit 1; }
+      - name: Package zip
+        run: |
+          mkdir -p pkg/Mistpine
+          cp build/native-release/src/app/mistpine.exe pkg/Mistpine/
+          cp -r build/native-release/assets pkg/Mistpine/assets
+          # No `zip` on the windows-2022 bash image (exit 127); use Python, which is
+          # present on every runner. make_archive appends the .zip extension itself.
+          python3 -c "import shutil; shutil.make_archive('mistpine-v${VERSION}-windows-x64', 'zip', root_dir='pkg')"
+          ls -la "mistpine-v${VERSION}-windows-x64.zip"
+          python3 -c "import zipfile,sys; n=zipfile.ZipFile('mistpine-v${VERSION}-windows-x64.zip').namelist(); \
+            print(len(n), 'entries'); \
+            sys.exit(0 if any(x.endswith('Mistpine/mistpine.exe') for x in n) else 1)"
+      - name: Dependency audit (PE import table)
+        run: |
+          # Authoritative check. scripts/pe_deps.py reads the PE import and
+          # delay-import directories -- exactly the data `dumpbin /dependents`
+          # prints -- with no external tool. dumpbin is kept as supplementary
+          # evidence in the next step because, on this runner's MSYS bash, a step
+          # that shells out to it has been seen to abort with an opaque shell
+          # status (157) before printing anything; that must not be allowed to
+          # look like a problem with the artifact.
+          # Record the toolchain that produced the image first: if the audit
+          # fails, the annotation then carries the compiler identity along with
+          # the import list, which is usually the whole root cause.
+          {
+            echo "== toolchain =="
+            command -v gcc && gcc -dumpmachine || echo "no gcc on PATH"
+            command -v cl || echo "no cl on PATH"
+            echo "== image =="
+            ls -la pkg/Mistpine/mistpine.exe
+            file pkg/Mistpine/mistpine.exe 2>/dev/null || true
+            echo "== audit =="
+          } > pe-imports.txt 2>&1
+          python3 scripts/pe_deps.py pkg/Mistpine/mistpine.exe >> pe-imports.txt 2>&1 || {
+            cat pe-imports.txt
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" pe-imports.txt "Windows dependency audit failed"
+            exit 1
+          }
+          cat pe-imports.txt
+      - name: Dependency audit (dumpbin, supplementary)
+        continue-on-error: true
+        run: |
+          DUMPBIN=$(ls "/c/Program Files/Microsoft Visual Studio/2022/"*/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe 2>/dev/null | tail -1)
+          if [ -z "$DUMPBIN" ] || [ ! -f "$DUMPBIN" ]; then
+            echo "dumpbin.exe not found on this image; skipped." > dumpbin.txt
+            echo "The PE import-table audit above is authoritative." >> dumpbin.txt
+            cat dumpbin.txt
+            exit 0
+          fi
+          echo "dumpbin: $DUMPBIN" > dumpbin.txt
+          echo "$DUMPBIN" //dependents pkg/Mistpine/mistpine.exe >> dumpbin.txt 2>&1
+          echo "dumpbin exited $?" >> dumpbin.txt
+          cat dumpbin.txt
+      - name: Packaged smoke test (foreign CWD)
+        run: |
+          rm -rf /tmp/mistpine-smoke && mkdir -p /tmp/mistpine-smoke
+          unzip -q "mistpine-v${VERSION}-windows-x64.zip" -d /tmp/mistpine-smoke
+          cd /tmp   # deliberately not the package directory
+          /tmp/mistpine-smoke/Mistpine/mistpine.exe --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1 || rc=$?
+          rc=${rc:-0}
+          cat smoke.log
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged Windows smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" smoke.log; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged Windows smoke test logged errors"
+            exit 1
+          fi
+      - name: Render verification attempt (D3D11)
+        continue-on-error: true
+        run: |
+          cd /tmp
+          timeout 300 /tmp/mistpine-smoke/Mistpine/mistpine.exe --play --frames 150 --hours 22 --qa camp --renderer d3d11 --screenshot /tmp/mistpine-windows-shot.png > render.log 2>&1
+          if [ -f /tmp/mistpine-windows-shot.png ]; then
+            echo "render verification: screenshot captured"
+            cp /tmp/mistpine-windows-shot.png "$GITHUB_WORKSPACE/mistpine-windows-shot.png"
+          else
+            echo "render verification: no screenshot produced on this runner (reported, not fabricated)"
+            tail -20 render.log || true
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: mistpine-v${{ env.VERSION }}-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-release-windows
+          path: |
+            dumpbin.txt
+            pe-imports.txt
+            mistpine-windows-shot.png
+
+  # ---------------------------------------------------------------------------
+  # Linux x86_64 on ubuntu-22.04 (oldest supported glibc): AppImage + tar.gz.
+  # ---------------------------------------------------------------------------
+  linux:
+    name: Linux x86_64 package (AppImage + tar.gz)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - name: Version
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build zip \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxtst-dev \
+            libxfixes-dev libxrender-dev libgl-dev libegl-dev libasound2-dev libpulse-dev \
+            xvfb libgl1-mesa-dri libglx-mesa0 mesa-utils
+      - name: Host tools (shaderc)
+        run: |
+          cmake --preset tools > /tmp/tools-cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-cfg.log "shaderc configure failed"; exit 1; }
+          cmake --build --preset tools --target shaderc > /tmp/tools-build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/tools-build.log "shaderc build failed"; exit 1; }
+      - name: Configure native-release
+        run: |
+          cmake --preset native-release -DAAA_BUILD_TESTS=OFF > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "linux configure failed"; exit 1; }
+      - name: Build native-release
+        run: |
+          cmake --build --preset native-release > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "linux build failed"; exit 1; }
+      - name: Package tar.gz
+        run: |
+          mkdir -p pkg/Mistpine
+          cp build/native-release/src/app/mistpine pkg/Mistpine/
+          cp -r build/native-release/assets pkg/Mistpine/assets
+          tar -czf "mistpine-v${VERSION}-linux-x86_64.tar.gz" -C pkg Mistpine
+          ls -la "mistpine-v${VERSION}-linux-x86_64.tar.gz"
+      - name: Package AppImage
+        run: |
+          mkdir -p appdir/usr/bin
+          cp build/native-release/src/app/mistpine appdir/usr/bin/
+          cp -r build/native-release/assets appdir/usr/bin/assets
+          python3 scripts/make_icon.py appdir/mistpine.png
+          cat > appdir/AppRun <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/mistpine" "$@"
+          EOF
+          chmod +x appdir/AppRun
+          cat > appdir/mistpine.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Mistpine
+          Comment=A valley in the clouds — a forest survival journey
+          Exec=mistpine
+          Icon=mistpine
+          Categories=Game;
+          EOF
+          curl -fsSL -o appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ./appimagetool --appimage-extract-and-run appdir "mistpine-v${VERSION}-linux-x86_64.AppImage"
+          ls -la "mistpine-v${VERSION}-linux-x86_64.AppImage"
+      - name: Dependency audit (ldd)
+        run: |
+          ldd build/native-release/src/app/mistpine | tee ldd.txt
+          if grep -qE "SDL|bgfx|bx|bimg" ldd.txt; then
+            echo "unexpected non-system shared-library dependency found" >&2; exit 1
+          fi
+      - name: Packaged smoke test (tar.gz, foreign CWD)
+        run: |
+          rm -rf /tmp/mistpine-smoke && mkdir -p /tmp/mistpine-smoke
+          tar -xzf "mistpine-v${VERSION}-linux-x86_64.tar.gz" -C /tmp/mistpine-smoke
+          cd /tmp
+          /tmp/mistpine-smoke/Mistpine/mistpine --headless --frames 600 --hours 22 --qa camp > smoke-tar.log 2>&1 || rc=$?
+          rc=${rc:-0}
+          cat smoke-tar.log
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-tar.log "packaged tar.gz smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" smoke-tar.log; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke-tar.log "packaged tar.gz smoke test logged errors"
+            exit 1
+          fi
+      - name: Packaged smoke test (AppImage payload, foreign CWD)
+        run: |
+          set +e
+          LOG=/tmp/smoke-appimage.log
+          XLOG=/tmp/appimage-extract.log
+          AI="$GITHUB_WORKSPACE/mistpine-v${VERSION}-linux-x86_64.AppImage"
+          BIN=/tmp/mistpine-appimage/squashfs-root/usr/bin/mistpine
+          ls -la "$AI"
+
+          # The log must live on an absolute, writable path: the smoke test runs
+          # with `/` as its working directory, which is not writable, so a bare
+          # `> smoke-appimage.log` there fails with an empty exit status 1 before
+          # the binary is ever started.
+          rm -rf /tmp/mistpine-appimage && mkdir -p /tmp/mistpine-appimage
+          (cd /tmp/mistpine-appimage && "$AI" --appimage-extract) > "$XLOG" 2>&1 || extract_rc=$?
+          extract_rc=${extract_rc:-0}
+          echo "appimage-extract exited $extract_rc"
+          tail -n 20 "$XLOG"
+          if [ "$extract_rc" -ne 0 ] || [ ! -f "$BIN" ]; then
+            {
+              echo "AppImage extraction failed (rc=$extract_rc) or payload binary missing."
+              echo "--- extract log ---"
+              cat "$XLOG"
+              echo "--- payload tree ---"
+              find /tmp/mistpine-appimage -maxdepth 4 2>/dev/null | head -100
+            } > "$LOG"
+            cat "$LOG"
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "AppImage extraction failed"
+            exit 1
+          fi
+
+          cd /
+          "$BIN" --headless --frames 600 --hours 22 --qa camp > "$LOG" 2>&1 || rc=$?
+          rc=${rc:-0}
+          cat "$LOG"
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "packaged AppImage smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" "$LOG"; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" "$LOG" "packaged AppImage smoke test logged errors"
+            exit 1
+          fi
+      - name: Render verification (xvfb + Mesa llvmpipe, OpenGL)
+        run: |
+          cd /tmp
+          xvfb-run -a -s "-screen 0 1280x720x24" \
+            /tmp/mistpine-smoke/Mistpine/mistpine --play --frames 240 --hours 22 --qa camp \
+            --renderer opengl --screenshot /tmp/mistpine-linux-shot.png > render.log 2>&1 || rc=$?
+          rc=${rc:-0}
+          cat render.log
+          if [ ! -f /tmp/mistpine-linux-shot.png ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" render.log "linux render verification produced no screenshot (rc=$rc)"
+            exit 1
+          fi
+          cp /tmp/mistpine-linux-shot.png "$GITHUB_WORKSPACE/mistpine-linux-shot.png"
+          echo "render verification: screenshot captured"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            mistpine-v${{ env.VERSION }}-linux-x86_64.tar.gz
+            mistpine-v${{ env.VERSION }}-linux-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-release-linux
+          path: |
+            ldd.txt
+            render.log
+            mistpine-linux-shot.png
+
+  # ---------------------------------------------------------------------------
+  # macOS arm64: Metal, Mistpine.app, ad-hoc signed (not notarized).
+  # ---------------------------------------------------------------------------
+  macos:
+    name: macOS arm64 package (Mistpine.app)
+    needs: shader-assets
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - name: Version
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      # The pinned bgfx shaderc cannot be built here (Dawn's tint fails to compile
+      # with this runner's libc++), so use the shader assets compiled on Linux.
+      - uses: actions/download-artifact@v4
+        with:
+          name: shader-assets
+          path: build/native-release/assets/shaders
+      - name: Configure native-release
+        run: |
+          cmake --preset native-release -DAAA_BUILD_TESTS=OFF -DAAA_SKIP_SHADER_COMPILE=ON > /tmp/cfg.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/cfg.log "macos configure failed"; exit 1; }
+      - name: Verify the metal shader assets are present
+        run: |
+          ls build/native-release/assets/shaders/
+          n=$(ls build/native-release/assets/shaders/metal/*.bin 2>/dev/null | wc -l)
+          echo "metal shader binaries: $n"
+          [ "$n" -gt 0 ] || { echo "no metal shader binaries found" >&2; exit 1; }
+      - name: Build native-release
+        run: |
+          cmake --build --preset native-release > /tmp/build.log 2>&1 ||
+            { "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" /tmp/build.log "macos build failed"; exit 1; }
+      - name: Package Mistpine.app
+        run: |
+          rm -rf Mistpine.app
+          mkdir -p Mistpine.app/Contents/MacOS Mistpine.app/Contents/Resources
+          cp build/native-release/src/app/mistpine Mistpine.app/Contents/MacOS/mistpine
+          cp -r build/native-release/assets Mistpine.app/Contents/Resources/assets
+          cat > Mistpine.app/Contents/Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Mistpine</string>
+            <key>CFBundleDisplayName</key><string>Mistpine</string>
+            <key>CFBundleIdentifier</key><string>ai.arena.mistpine</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleExecutable</key><string>mistpine</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>LSMinimumSystemVersion</key><string>14.0</string>
+          </dict>
+          </plist>
+          EOF
+          # Ad-hoc signed, NOT notarized (PROMPT §9.4, §16).
+          codesign --force --deep -s - Mistpine.app
+          codesign --verify --deep --strict Mistpine.app && echo "ad-hoc signature verified"
+      - name: Package zip
+        run: |
+          zip -r -y "mistpine-v${VERSION}-macos-arm64.zip" Mistpine.app
+          ls -la "mistpine-v${VERSION}-macos-arm64.zip"
+      - name: Dependency audit (otool)
+        run: |
+          otool -L Mistpine.app/Contents/MacOS/mistpine | tee otool.txt
+          if grep -qE "SDL|bgfx|bx|bimg" otool.txt; then
+            echo "unexpected non-system library dependency found" >&2; exit 1
+          fi
+      - name: Packaged smoke test (foreign CWD)
+        run: |
+          cd /tmp
+          "$GITHUB_WORKSPACE/Mistpine.app/Contents/MacOS/mistpine" --headless --frames 600 --hours 22 --qa camp > smoke.log 2>&1 || rc=$?
+          rc=${rc:-0}
+          cat smoke.log
+          if [ "$rc" -ne 0 ]; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged macOS smoke test exited $rc"
+            exit 1
+          fi
+          if grep -q "\[error\]" smoke.log; then
+            "$GITHUB_WORKSPACE/scripts/ci_annotate_failure.sh" smoke.log "packaged macOS smoke test logged errors"
+            exit 1
+          fi
+      - name: Render verification attempt (Metal)
+        continue-on-error: true
+        run: |
+          cd /tmp
+          timeout 300 "$GITHUB_WORKSPACE/Mistpine.app/Contents/MacOS/mistpine" --play --frames 150 --hours 22 --qa camp --renderer metal --screenshot /tmp/mistpine-macos-shot.png > render.log 2>&1
+          if [ -f /tmp/mistpine-macos-shot.png ]; then
+            echo "render verification: screenshot captured"
+            cp /tmp/mistpine-macos-shot.png "$GITHUB_WORKSPACE/mistpine-macos-shot.png"
+          else
+            echo "render verification: no screenshot produced on this runner (reported, not fabricated)"
+            tail -20 render.log || true
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: mistpine-v${{ env.VERSION }}-macos-arm64.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qa-release-macos
+          path: |
+            otool.txt
+            mistpine-macos-shot.png
+
+  # ---------------------------------------------------------------------------
+  # SHA256SUMS.txt covering every other release asset (PROMPT §9).
+  # ---------------------------------------------------------------------------
+  checksums:
+    name: SHA256SUMS
+    needs: [web, windows, linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - name: Version
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"; VERSION="${VERSION%%-*}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-web
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-web-singlefile
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-macos
+          path: dist
+      - name: Generate and verify SHA256SUMS.txt
+        run: |
+          cd dist
+          ls -la
+          sha256sum \
+            "mistpine-v${VERSION}-web.zip" \
+            "mistpine-v${VERSION}-web-singlefile.html" \
+            "mistpine-v${VERSION}-windows-x64.zip" \
+            "mistpine-v${VERSION}-linux-x86_64.AppImage" \
+            "mistpine-v${VERSION}-linux-x86_64.tar.gz" \
+            "mistpine-v${VERSION}-macos-arm64.zip" > "SHA256SUMS.txt"
+          cat SHA256SUMS.txt
+          # Verify: every listed asset exists and matches its checksum; exactly the
+          # six release assets are covered (SHA256SUMS.txt never lists itself).
+          sha256sum -c SHA256SUMS.txt
+          [ "$(wc -l < SHA256SUMS.txt)" -eq 6 ] || { echo "SHA256SUMS.txt must cover exactly 6 assets" >&2; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: dist/SHA256SUMS.txt
+
+  # ---------------------------------------------------------------------------
+  # Publish: only for tag=v0.1.0 (the real release, run at the merge SHA).
+  # Creates the DRAFT release and uploads every asset; the draft is verified
+  # (§14.5) and published (§14.6) only after the checks below pass.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish draft release v0.1.0
+    needs: [checksums]
+    if: ${{ (inputs.tag || github.ref_name) == 'v0.1.0' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      # Declaring `permissions:` at all sets every scope not named here to
+      # `none`, and `gh run download` reads this run's artifacts -- so
+      # actions: read is required, not optional. Without it the download
+      # step fails with 403.
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.ref }}
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist
+          for a in release-web release-web-singlefile release-windows release-linux release-macos release-checksums; do
+            gh run download "$GITHUB_RUN_ID" --name "$a" --dir "dist/$a" || exit 1
+          done
+          find dist -type f | sort
+      - name: Create draft release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ inputs.sha }}"
+          [ -n "$SHA" ] || SHA="${GITHUB_SHA}"
+
+          # Resolve each asset by name under dist/ rather than by a fixed path.
+          # `gh run download` currently extracts straight into --dir, but betting
+          # the publish on that exact layout would fail the release on any CLI
+          # change. Locating them doubles as an existence check.
+          locate() {
+            local f
+            f=$(find dist -type f -name "$1" | head -1)
+            [ -n "$f" ] || { echo "missing downloaded asset: $1" >&2; return 1; }
+            echo "$f"
+          }
+          A_WEB=$(locate 'mistpine-v0.1.0-web.zip')
+          A_SINGLE=$(locate 'mistpine-v0.1.0-web-singlefile.html')
+          A_WIN=$(locate 'mistpine-v0.1.0-windows-x64.zip')
+          A_APPIMAGE=$(locate 'mistpine-v0.1.0-linux-x86_64.AppImage')
+          A_TAR=$(locate 'mistpine-v0.1.0-linux-x86_64.tar.gz')
+          A_MAC=$(locate 'mistpine-v0.1.0-macos-arm64.zip')
+          A_SUMS=$(locate 'SHA256SUMS.txt')
+
+          # Size plausibility (PROMPT 14.5): a real build of this project is many
+          # megabytes, so a truncated or empty upload is caught here instead of
+          # after it has been published.
+          for f in "$A_WEB" "$A_SINGLE" "$A_WIN" "$A_APPIMAGE" "$A_TAR" "$A_MAC"; do
+            sz=$(wc -c < "$f")
+            echo "$(basename "$f"): $sz bytes"
+            [ "$sz" -ge 262144 ] || { echo "implausibly small asset: $f ($sz bytes)" >&2; exit 1; }
+          done
+          sz=$(wc -c < "$A_SUMS")
+          echo "SHA256SUMS.txt: $sz bytes"
+          [ "$sz" -ge 200 ] || { echo "implausible SHA256SUMS.txt ($sz bytes)" >&2; exit 1; }
+
+          if ! gh release view v0.1.0 >/dev/null 2>&1; then
+            gh release create v0.1.0 --target "$SHA" --draft \
+              --title "Mistpine v0.1.0" --notes-file docs/release-notes-v0.1.0.md
+          fi
+          gh release upload v0.1.0 --clobber \
+            "$A_WEB" "$A_SINGLE" "$A_WIN" "$A_APPIMAGE" "$A_TAR" "$A_MAC" "$A_SUMS"
+      - name: Verify the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view v0.1.0 --json assets --jq '.assets[].name' | sort > /tmp/assets.txt
+          cat /tmp/assets.txt
+          for f in mistpine-v0.1.0-web.zip mistpine-v0.1.0-web-singlefile.html \
+                   mistpine-v0.1.0-windows-x64.zip mistpine-v0.1.0-linux-x86_64.AppImage \
+                   mistpine-v0.1.0-linux-x86_64.tar.gz mistpine-v0.1.0-macos-arm64.zip SHA256SUMS.txt; do
+            grep -qx "$f" /tmp/assets.txt || { echo "missing release asset: $f" >&2; exit 1; }
+          done
+          echo "all 7 release assets present"

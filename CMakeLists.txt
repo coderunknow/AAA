@@ -16,10 +16,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(MSVC)
+  # Static CRT for portable release packages (PROMPT §9.2): the shipped .exe must not
+  # depend on VCRUNTIME/MSVCR DLLs. Set before any target (incl. fetched deps) is created.
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "MSVC runtime library" FORCE)
+endif()
+
 option(AAA_BUILD_GAME   "Build the game executable" ON)
 option(AAA_BUILD_TESTS  "Build unit tests" ON)
 option(AAA_BUILD_TOOLS  "Build host tools (shaderc) — native only" OFF)
 option(AAA_RENDERER_NOOP "Native only: build bgfx with only the Noop renderer (headless; no X11/GL needed)" OFF)
+option(AAA_SINGLE_FILE  "Web only: one self-contained HTML (data+wasm inlined; opens from file://)" OFF)
 set(AAA_SHADERC "" CACHE FILEPATH "Path to a host bgfx shaderc executable (required for web builds)")
 
 if(EMSCRIPTEN)
@@ -37,6 +44,15 @@ if(AAA_BUILD_TESTS AND NOT AAA_PLATFORM_WEB)
   enable_testing()  # before any add_subdirectory so app smoke tests register too
 endif()
 
+# Portable native builds: on Windows the CI/release runners resolve CMake's Ninja
+# generator to the bundled MinGW GCC, which by default links libgcc, libstdc++ and
+# winpthread dynamically. Those DLLs are not on a user's machine, so the packaged
+# .zip would not run after "unzip -> run" (PROMPT §9.2). Link them in statically.
+if(MINGW)
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -static")
+endif()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Core, platform-independent code (world generation, gameplay, procedural assets)
@@ -51,6 +67,11 @@ add_subdirectory(src/audio)
 if(AAA_BUILD_GAME OR AAA_BUILD_TOOLS)
   include(Dependencies)
 endif()
+
+# The project VERSION (0.1.0) is the single source of truth for the app version,
+# exposed to logs, --version and the title screen (PROMPT §8.9). Applied after the
+# third-party includes above so it only reaches first-party targets.
+add_compile_definitions(AAA_VERSION_STRING="${PROJECT_VERSION}")
 
 if(AAA_BUILD_GAME)
   include(Shaders)

@@ -156,7 +156,9 @@ std::string serializeSave(const SaveData& d) {
   s += "},\"settings\":{";
   appendNum(s, "quality", d.quality);
   appendNum(s, "mouseSensitivity", d.mouseSensitivity);
-  s += std::string("\"invertY\":") + (d.invertY ? "true" : "false");
+  s += std::string("\"invertY\":") + (d.invertY ? "true" : "false") + ",";
+  appendNum(s, "masterVolume", d.masterVolume);
+  s += std::string("\"fullscreen\":") + (d.fullscreen ? "true" : "false");
   s += "},\"survival\":{";
   appendNum(s, "day", d.day);
   appendNum(s, "health", d.vitals.health);
@@ -215,7 +217,7 @@ SaveLoadResult deserializeSave(const std::string& text, uint32_t expectedSeed, S
     d.playerYaw = static_cast<float>(yaw);
     d.hours = static_cast<float>(dayFraction * 24.0);
     migrated = true;
-  } else if (version == 2 || version == 3) {
+  } else if (version == 2 || version == 3 || version == 4) {
     const JValue* fmt = root.get("format");
     if (!fmt || fmt->type != JValue::String || fmt->s != "mistpine-save") return SaveLoadResult::Corrupt;
     const JValue* w = root.get("world");
@@ -230,14 +232,21 @@ SaveLoadResult deserializeSave(const std::string& text, uint32_t expectedSeed, S
     d.playSeconds = play;
     d.playerPos = {static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)};
     d.playerYaw = static_cast<float>(yaw);
-    double q, ms;
+    double q, ms, mv;
     if (num(st, "quality", q)) d.quality = static_cast<int>(q);  // settings are optional
     if (num(st, "mouseSensitivity", ms)) d.mouseSensitivity = static_cast<float>(ms);
     if (st)
       if (const JValue* inv = st->get("invertY"); inv && inv->type == JValue::Bool) d.invertY = inv->b;
+    // v4 adds masterVolume / fullscreen; both default when absent (v3 migration).
+    if (num(st, "masterVolume", mv)) d.masterVolume = static_cast<float>(mv);
+    if (st)
+      if (const JValue* fs = st->get("fullscreen"); fs && fs->type == JValue::Bool) d.fullscreen = fs->b;
     if (version == 2) {
       migrated = true;  // v2 -> v3: survival state starts fresh (defaults)
-    } else {
+    } else if (version == 3) {
+      migrated = true;  // v3 -> v4: adds masterVolume / fullscreen with defaults
+    }
+    if (version >= 3) {
       const JValue* sv = root.get("survival");
       double day, hp, wa, sa, hy, we;
       if (!num(sv, "day", day) || !num(sv, "health", hp) || !num(sv, "warmth", wa) || !num(sv, "satiety", sa) ||
@@ -289,7 +298,8 @@ SaveLoadResult deserializeSave(const std::string& text, uint32_t expectedSeed, S
   const bool ok = std::fabs(d.playerPos.x) <= 512.0f && std::fabs(d.playerPos.z) <= 512.0f &&
                   d.playerPos.y > -50.0f && d.playerPos.y < 1000.0f && std::isfinite(d.playerYaw) &&
                   d.hours >= 0.0f && d.hours < 24.0f && d.playSeconds >= 0.0 && d.quality >= 0 && d.quality <= 2 &&
-                  d.mouseSensitivity > 0.05f && d.mouseSensitivity < 10.0f;
+                  d.mouseSensitivity > 0.05f && d.mouseSensitivity < 10.0f && std::isfinite(d.masterVolume) &&
+                  d.masterVolume >= 0.0f && d.masterVolume <= 1.0f;
   bool survivalOk = d.day >= 1 && d.day <= 100000;
   auto pct = [](float v) { return std::isfinite(v) && v >= 0.0f && v <= 100.0f; };
   survivalOk = survivalOk && pct(d.vitals.health) && pct(d.vitals.warmth) && pct(d.vitals.satiety) &&

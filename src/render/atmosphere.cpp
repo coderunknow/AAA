@@ -53,6 +53,43 @@ AtmosphereState evaluateAtmosphere(const AtmosphereInputs& in) {
   s.sunDisc = 10.0f;
   s.exposure = lerp(3.2f, 0.9f, day);
   s.gradeHighlights = lerp(Vec3{0.98f, 1.0f, 1.05f}, Vec3{1.06f, 1.0f, 0.92f}, day);
+
+  // --- time-of-day grading presets (PROMPT M4.1) ----------------------------------------------
+  // Five art-directed grades, blended smoothly by hour. Midday/morning keep the tuned
+  // neutral baseline (saturation 1.06, contrast 1.06); dawn/dusk warm up, night cools and
+  // desaturates. The grade is applied post-tonemap in fs_tonemap.
+  struct GradePreset {
+    Vec3 tint;
+    float saturation, contrast;
+  };
+  const GradePreset kGrades[5] = {
+      {Vec3{1.05f, 0.97f, 0.90f}, 1.10f, 1.04f},  // dawn: rose-gold
+      {Vec3{1.01f, 1.00f, 0.99f}, 1.06f, 1.06f},  // morning: neutral-crisp (baseline)
+      {Vec3{1.00f, 1.00f, 1.00f}, 1.04f, 1.08f},  // midday: neutral, slightly punchy
+      {Vec3{1.06f, 0.96f, 0.88f}, 1.12f, 1.05f},  // dusk: warm amber
+      {Vec3{0.94f, 0.98f, 1.06f}, 0.85f, 1.02f},  // night: cool, desaturated
+  };
+  const float h = std::fmod(in.hours + 24.0f, 24.0f);
+  const float wDawn = smoothstep(4.5f, 6.0f, h) * (1.0f - smoothstep(7.5f, 9.0f, h));
+  const float wMorning = smoothstep(7.5f, 9.0f, h) * (1.0f - smoothstep(11.5f, 13.0f, h));
+  const float wMidday = smoothstep(11.5f, 13.0f, h) * (1.0f - smoothstep(15.5f, 17.0f, h));
+  const float wDusk = smoothstep(15.5f, 17.0f, h) * (1.0f - smoothstep(19.0f, 20.5f, h));
+  const float wNight = 1.0f - (wDawn + wMorning + wMidday + wDusk);  // fills the remaining hours
+  Vec3 tint{0.0f, 0.0f, 0.0f};
+  float saturation = 0.0f, contrast = 0.0f;
+  auto accum = [&](float w, const GradePreset& p) {
+    tint = tint + p.tint * w;
+    saturation += p.saturation * w;
+    contrast += p.contrast * w;
+  };
+  accum(wDawn, kGrades[0]);
+  accum(wMorning, kGrades[1]);
+  accum(wMidday, kGrades[2]);
+  accum(wDusk, kGrades[3]);
+  accum(wNight, kGrades[4]);
+  s.gradeTint = tint;
+  s.gradeSaturation = saturation;
+  s.gradeContrast = contrast;
   return s;
 }
 

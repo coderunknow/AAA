@@ -1,7 +1,17 @@
+# The in-engine UI (menus, HUD, prompts, toasts) is its own library so unit tests can
+# exercise its logic without the app executable.
+add_library(aaa_ui STATIC ui.cpp)
+target_link_libraries(aaa_ui PUBLIC aaa_game aaa_render)
+aaa_target_defaults(aaa_ui)
+
 add_executable(mistpine main.cpp app.cpp)
-target_link_libraries(mistpine PRIVATE aaa_render aaa_platform)
+target_link_libraries(mistpine PRIVATE aaa_ui aaa_render aaa_platform)
 aaa_target_defaults(mistpine)
 add_dependencies(mistpine aaa_shaders)
+if(WIN32)
+  # A windowed game: no console window in the packaged .exe (PROMPT §9.2).
+  set_target_properties(mistpine PROPERTIES WIN32_EXECUTABLE ON)
+endif()
 
 if(EMSCRIPTEN)
   set_target_properties(mistpine PROPERTIES OUTPUT_NAME "index" SUFFIX ".html")
@@ -9,11 +19,31 @@ if(EMSCRIPTEN)
   set_property(TARGET mistpine APPEND PROPERTY LINK_DEPENDS "${AAA_WEB_SHELL}")
   target_link_options(mistpine PRIVATE
     "--shell-file=${AAA_WEB_SHELL}"
-    "--preload-file=${CMAKE_BINARY_DIR}/assets@/assets"
     "-sMAX_WEBGL_VERSION=2" "-sMIN_WEBGL_VERSION=2"
     "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=256MB" "-sSTACK_SIZE=1MB"
     "-sENVIRONMENT=web" "-sEXPORTED_RUNTIME_METHODS=['UTF8ToString','stringToUTF8','lengthBytesUTF8']"
-    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_aaa_resume','_aaa_start_over']")
+    "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free']")
+  if(AAA_SINGLE_FILE)
+    # One self-contained HTML, openable from file:// (PROMPT §9.1).
+    #
+    # --embed-file (not --preload-file) puts the asset bundle *inside* the wasm
+    # instead of a separate index.data. That matters: -sSINGLE_FILE=1 base64-inlines
+    # the wasm into the JS and the JS into the HTML, but it does NOT inline a
+    # --preload-file bundle, so a preloaded build still tries to fetch index.data and
+    # fails under file:// ("URL scheme \"file\" is not supported"). Embedding is what
+    # makes the artifact genuinely single-file.
+    target_link_options(mistpine PRIVATE
+      "-sSINGLE_FILE=1"
+      "--embed-file=${CMAKE_BINARY_DIR}/assets@/assets")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_custom_command(TARGET mistpine POST_BUILD
+      COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/scripts/make_single_file.py"
+              "$<TARGET_FILE_DIR:mistpine>"
+      COMMENT "inline js -> single-file html"
+      VERBATIM)
+  else()
+    target_link_options(mistpine PRIVATE "--preload-file=${CMAKE_BINARY_DIR}/assets@/assets")
+  endif()
   if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     # (No -gsource-map: needs llvm-dwarfdump, absent from the sandbox LLVM; DWARF from -g is kept.)
     target_link_options(mistpine PRIVATE "-sASSERTIONS=1")
@@ -21,8 +51,8 @@ if(EMSCRIPTEN)
     target_link_options(mistpine PRIVATE "--profiling-funcs")
   endif()
 else()
-  # Native: copy-free asset lookup — the binary loads <build>/assets via SDL_GetBasePath()/../assets.
-  target_compile_definitions(mistpine PRIVATE AAA_ASSET_DIR="${CMAKE_BINARY_DIR}/assets")
+  # Native: no compile-time asset path. The binary discovers assets relative to the
+  # executable at runtime (App::resolveAssetRoot), so packaged builds work from any CWD.
 endif()
 
 # Headless smoke runs (bgfx Noop renderer): full load -> play loop, including the QA scenarios.

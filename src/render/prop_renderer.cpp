@@ -44,8 +44,8 @@ const KindStyle kStyles[kPropKindCount] = {
     {3, 2.0f, 120.0f, 400.0f, 1500.0f, {0.27f, 0.265f, 0.245f}, {0.36f, 0.35f, 0.32f}, {0.8f, 0.9f, 0.8f}, {1.0f, 1.05f, 0.85f}, 0.45f, 0.5f, true},
     // Fallen log
     {2, 4.0f, 25.0f, 70.0f, 200.0f, {0.12f, 0.09f, 0.065f}, {0.18f, 0.13f, 0.09f}, {0.8f, 0.9f, 0.7f}, {1.0f, 1.0f, 0.8f}, 0.45f, 0.6f, false},
-    // Grass
-    {3, 0.0f, 20.0f, 40.0f, 48.0f, {0.1f, 0.1f, 0.1f}, {0.1f, 0.1f, 0.1f}, {0.36f, 0.46f, 0.36f}, {0.58f, 0.6f, 0.42f}, 0.4f, 0.85f, false},
+    // Grass (M4.3: widened hue range — grey-green moss tones to warm seed-head yellow)
+    {3, 0.0f, 20.0f, 40.0f, 48.0f, {0.1f, 0.1f, 0.1f}, {0.1f, 0.1f, 0.1f}, {0.30f, 0.42f, 0.30f}, {0.62f, 0.62f, 0.38f}, 0.4f, 0.85f, false},
 };
 
 procgen::PropMesh makeKind(PropKind k, uint32_t seed, int lod) {

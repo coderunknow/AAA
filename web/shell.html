@@ -21,54 +21,14 @@
   #stage { color: var(--dim); font-size: 13px; letter-spacing: 0.08em; min-height: 1.2em; }
   #error { display: none; background: #0b0e10f0; z-index: 7; text-align: center; padding: 0 10vw; }
   #error p { color: var(--dim); max-width: 560px; line-height: 1.6; }
-
-  /* Title and pause share one layout: the world stays visible, softly veiled. */
-  .menu { display: none; z-index: 5; cursor: pointer;
-    background: linear-gradient(90deg, #0b0e10ee 0%, #0b0e10c8 45%, #0b0e1040 80%, #0b0e1010 100%);
-    align-items: flex-start; padding-left: 9vw; }
-  .menu h1 { margin-left: 0; }
-  .menu .lead { color: var(--dim); max-width: 420px; line-height: 1.65; font-size: 15px; margin: 18px 0 8px; }
-  .keys { display: grid; grid-template-columns: auto auto; gap: 6px 22px; margin-top: 26px; font-size: 14px; }
-  .keys span:nth-child(odd) { color: var(--accent); text-align: right; font-family: ui-monospace, monospace; font-size: 12px; }
-  .actions { display: flex; gap: 14px; margin-top: 34px; align-items: center; }
-  button { font: inherit; color: var(--ink); background: #ffffff10; border: 1px solid #c9b98f80; padding: 10px 26px;
-    letter-spacing: 0.22em; text-transform: uppercase; font-size: 13px; cursor: pointer; transition: background 0.2s; }
-  button:hover { background: #c9b98f30; }
-  button.quiet { border-color: transparent; background: none; color: var(--dim); letter-spacing: 0.12em; padding: 10px 8px; }
-  button.quiet:hover { color: var(--ink); }
-  .hint { margin-top: 18px; color: var(--dim); font-size: 12px; letter-spacing: 0.1em; }
-
-  /* HUD: quiet by default; vitals only assert themselves when they matter. */
-  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 2; opacity: 0; transition: opacity 1.5s; }
-  #hud.on { opacity: 1; }
-  #vitals { position: absolute; left: 34px; bottom: 30px; display: grid; grid-template-columns: 70px 120px; gap: 7px 12px;
-    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; text-shadow: 0 1px 4px #000c; transition: opacity 1.2s; }
-  #vitals.calm { opacity: 0.5; }
-  #hud::before, #hud::after { content: ""; position: absolute; width: 420px; height: 220px; pointer-events: none; }
-  #hud::before { left: -120px; bottom: -110px; background: radial-gradient(closest-side, #0b0e1070, #0b0e1000); }
-  #hud::after { right: -120px; top: -110px; background: radial-gradient(closest-side, #0b0e1070, #0b0e1000); }
-  .v { height: 3px; margin-top: 6px; background: #ffffff22; overflow: hidden; }
-  .v > div { height: 100%; width: 100%; transition: width 0.4s, background 0.4s; }
-  .low { color: #e9a07a; }
-  #clock { position: absolute; right: 34px; top: 26px; text-align: right; text-shadow: 0 1px 5px #000c; }
-  #clock .t { font-size: 15px; letter-spacing: 0.2em; text-transform: uppercase; }
-  #clock .s { color: #cfcabd; font-size: 13px; letter-spacing: 0.1em; margin-top: 4px; }
-  #inv { position: absolute; right: 34px; bottom: 30px; text-align: right; font-size: 13px; line-height: 1.7;
-    letter-spacing: 0.08em; text-shadow: 0 1px 4px #000c; }
-  #inv b { color: var(--accent); font-weight: 400; font-family: ui-monospace, monospace; margin-left: 10px; }
-  #prompt { position: fixed; left: 50%; bottom: 15vh; transform: translateX(-50%); z-index: 3; font-size: 15px;
-    letter-spacing: 0.08em; text-shadow: 0 1px 6px #000c; opacity: 0; transition: opacity 0.25s; pointer-events: none;
-    white-space: nowrap; }
-  #toasts { position: fixed; left: 50%; bottom: 21vh; transform: translateX(-50%); z-index: 3; display: flex;
-    flex-direction: column-reverse; align-items: center; gap: 6px; pointer-events: none; }
-  .toast { font-size: 15px; font-style: italic; color: #efe9dc; text-shadow: 0 1px 8px #000; opacity: 0;
-    transition: opacity 0.8s; max-width: 70vw; text-align: center; }
-  .toast.on { opacity: 1; }
 </style>
 </head>
 <body>
 <canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas>
 
+<!-- The DOM retains only the loading overlay and fatal-error / WebGL2 messaging.
+     Menus, HUD, prompts and toasts are rendered in-engine (C++/bgfx) so web and
+     native share the same UI. -->
 <div id="loading" class="overlay">
   <h1>MISTPINE</h1>
   <div class="sub">a valley in the clouds</div>
@@ -76,59 +36,14 @@
   <div id="stage">Starting</div>
 </div>
 
-<div id="title" class="overlay menu">
-  <h1>MISTPINE</h1>
-  <div class="sub">a valley in the clouds</div>
-  <p class="lead" id="lead">The pass is closed behind you. Somewhere up the valley stands an old shrine.
-    Gather wood, keep warm, and do not let the night find you without a fire.</p>
-  <div class="keys">
-    <span>W A S D</span><span>move &nbsp;·&nbsp; SHIFT run &nbsp;·&nbsp; SPACE jump</span>
-    <span>E</span><span>gather, drink, tend the fire, rest at the shrine</span>
-    <span>F</span><span>build a fire (3 branches + flint)</span>
-    <span>R</span><span>eat</span>
-    <span>ESC</span><span>pause</span>
-  </div>
-  <div class="actions">
-    <button id="begin">Begin</button>
-    <button id="restart" class="quiet" style="display:none">Start a new journey</button>
-  </div>
-  <div class="hint">Headphones recommended</div>
-</div>
-
-<div id="pause" class="overlay menu">
-  <h1>PAUSED</h1>
-  <p class="lead">Your journey is saved in this browser.</p>
-  <div class="keys">
-    <span>W A S D</span><span>move</span>
-    <span>MOUSE</span><span>look &nbsp;·&nbsp; WHEEL camera distance</span>
-    <span>SHIFT / CTRL</span><span>run / walk slowly</span>
-    <span>SPACE / C</span><span>jump / crouch</span>
-    <span>E</span><span>interact</span>
-    <span>F / R</span><span>build fire / eat</span>
-  </div>
-  <div class="actions"><button id="resume">Continue</button></div>
-</div>
-
 <div id="error" class="overlay">
   <h1>MISTPINE</h1>
   <p id="errortext"></p>
 </div>
 
-<div id="hud">
-  <div id="clock"><div class="t" id="phase"></div><div class="s" id="temp"></div></div>
-  <div id="vitals">
-    <span id="l0">Health</span><div class="v"><div id="b0" style="background:#d8cfbb"></div></div>
-    <span id="l1">Warmth</span><div class="v"><div id="b1" style="background:#e3a76b"></div></div>
-    <span id="l2">Food</span><div class="v"><div id="b2" style="background:#b9c27e"></div></div>
-    <span id="l3">Water</span><div class="v"><div id="b3" style="background:#8fb4c9"></div></div>
-  </div>
-  <div id="inv"></div>
-</div>
-<div id="toasts"></div>
-<div id="prompt"></div>
-
 <script>
-  // Thin bootstrap only: DOM overlays + Emscripten Module config. All game logic is C++/WASM.
+  // Thin bootstrap only: DOM overlays + Emscripten Module config. All game logic,
+  // menus and HUD are C++/WASM rendered into the canvas.
   (function () {
     const $ = (id) => document.getElementById(id);
     const showError = (msg) => {
@@ -148,50 +63,19 @@
       showError("The graphics context was lost (the GPU driver reset or ran out of memory). Reload the page to continue.");
     }, false);
 
-    // Menus: a click anywhere on the veil (or the button) starts / resumes.
-    const resume = () => {
-      $("title").style.display = "none";
-      $("pause").style.display = "none";
-      $("hud").classList.add("on");
-      canvas.focus();
-      if (window.Module._aaa_resume) window.Module._aaa_resume();
-    };
-    $("title").addEventListener("click", resume);
-    $("pause").addEventListener("click", resume);
-    let confirmRestart = false;
-    $("restart").addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (!confirmRestart) { confirmRestart = true; $("restart").textContent = "Click again to abandon this journey"; return; }
-      window.Module._aaa_start_over();
-      location.reload();
+    // Pointer-lock bridge (platform glue, not UI): browsers only grant pointer lock
+    // inside a user gesture. Menus/HUD are in-engine, so when the state snapshot says
+    // a click will start or resume the game (and is not on a menu-navigation button),
+    // request the lock from within this click handler.
+    canvas.addEventListener("click", (e) => {
+      const s = window.__mistpineState;
+      if (!s || (s.menu !== "title" && s.menu !== "pause")) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width / Math.max(1, rect.width));
+      const y = (e.clientY - rect.top) * (canvas.height / Math.max(1, rect.height));
+      const blocked = (s.noLock || []).some(([rx, ry, rw, rh]) => x >= rx && x < rx + rw && y >= ry && y < ry + rh);
+      if (!blocked && document.pointerLockElement !== canvas) canvas.requestPointerLock();
     });
-
-    // Notifications: short, italic, stacked, self-dismissing.
-    const notify = (text) => {
-      const el = document.createElement("div");
-      el.className = "toast";
-      el.textContent = text;
-      const box = $("toasts");
-      box.appendChild(el);
-      while (box.children.length > 3) box.removeChild(box.firstChild);
-      requestAnimationFrame(() => el.classList.add("on"));
-      setTimeout(() => { el.classList.remove("on"); setTimeout(() => el.remove(), 900); }, 4200 + text.length * 30);
-    };
-
-    const names = ["Branches", "Flint", "Berries", "Mushrooms"];
-    const hud = (h) => {
-      $("phase").textContent = "Day " + h.day + " · " + h.phase;
-      $("temp").textContent = h.clock + "  ·  " + h.temp + "°C" + (h.wet > 0.25 ? "  ·  soaked" : "") + (h.heat > 0.15 ? "  ·  by the fire" : "");
-      const vals = [h.hp, h.warm, h.food, h.water];
-      let calm = true;
-      vals.forEach((v, i) => {
-        $("b" + i).style.width = Math.max(0, Math.min(100, v)) + "%";
-        $("l" + i).className = v < 30 ? "low" : "";
-        if (v < 70) calm = false;
-      });
-      $("vitals").className = calm ? "calm" : "";
-      $("inv").innerHTML = h.inv.map((n, i) => n > 0 ? names[i] + "<b>" + n + "</b>" : "").filter(Boolean).join("<br>");
-    };
 
     window.Module = {
       canvas: canvas,
@@ -206,17 +90,7 @@
         canvas.focus();
         window.__mistpineReady = true;  // used by the automated browser playtest
       },
-      aaaStart: (hasSave) => {
-        $("begin").textContent = hasSave ? "Continue" : "Begin";
-        $("restart").style.display = hasSave ? "" : "none";
-        if (hasSave) $("lead").textContent = "The valley has kept your place. The fires you left may have burned low.";
-        $("title").style.display = "flex";
-      },
       aaaError: (msg) => showError(msg),
-      aaaPause: (p) => { $("pause").style.display = p ? "flex" : "none"; },
-      aaaPrompt: (t) => { $("prompt").textContent = t; $("prompt").style.opacity = t ? 1 : 0; },
-      aaaHud: hud,
-      aaaNotify: notify,
       onAbort: (what) => showError("The game stopped unexpectedly (" + what + "). Reload the page to try again."),
     };
     window.addEventListener("error", (e) => { if (!window.Module.__ready) console.warn(e.message); });

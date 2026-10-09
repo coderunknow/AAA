@@ -31,6 +31,13 @@ class Platform {
   bool pointerLocked() const;
   SDL_Window* window() const { return window_; }
   bool headless() const { return headless_; }
+  // In-engine UI support: absolute mouse position in framebuffer pixels, the latched
+  // left-click edge, the user input settings, and fullscreen toggling (native).
+  Vec2 mousePositionPixels() const;
+  bool takeMouseClick();
+  InputSettings& inputSettings() { return input_.settings(); }
+  void setFullscreen(bool on);
+  bool fullscreen() const;
 
  private:
   SDL_Window* window_ = nullptr;
