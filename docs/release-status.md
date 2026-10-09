@@ -91,10 +91,11 @@ Awaiting the owner's explicit merge approval (PROMPT §14.3); nothing has been m
 | **37805433751** | release | v0.1.0-rc | **f8bd485** | **failure** | shader-assets ✅ web ✅ macOS ✅ Linux ✅; Windows ❌ — audit ran correctly, flagged 13 `api-ms-win-crt-*` imports |
 | **37808662729** | ci | branch | **aa260b9** | **success** | all 8 jobs green |
 | **37808656086** | release | v0.1.0-rc | **aa260b9** | **success** | **FULLY GREEN — all 6 jobs, incl. SHA256SUMS** |
-| **37816644408** | ci | branch | **5c3680f** | **success** | all 8 jobs green — **current head** |
-| **37816642486** | release | v0.1.0-rc | **5c3680f** | **success** | all 6 jobs green — **current head** |
+| **37885730503** | ci | branch | **3e0172e** | **success** | all 8 jobs green — **current head** |
+| **37885727223** | release | v0.1.0-rc | **3e0172e** | **success** | all 6 jobs green — **current head** |
 
-`5c3680f` is the branch head and is fully verified on both workflows. Nothing has been merged.
+`3e0172e` is the branch head and is fully verified on both workflows. Nothing has been merged.
+The final report for this release is at `../FINAL_REPORT.md` (outside the repository).
 The new `nostorage` playtest ran and passed in **both** workflows (CI browser job; release web
 job against the single-file HTML over `file://`), so §13's "remain playable if persistence is
 unavailable" is now CI-verified and not merely implemented.

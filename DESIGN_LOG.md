@@ -727,3 +727,51 @@ was there. So enabling Pages in *Settings → Pages → Source: GitHub Actions* 
 disclosed elsewhere but missing from it — the **Windows 10 floor** implied by the Universal CRT
 imports, and the `file://` localStorage caveat for the single-file build (with its `nostorage`
 regression test).
+
+### #23 — 2026-10-08 — DONE: harden the publish job — the one path no dry run ever executes
+
+`publish` is guarded by `(inputs.tag || github.ref_name) == 'v0.1.0'`, so **every dry run skips
+it**. It is gated to run exactly once, on the real release, which makes it the least-exercised
+code in the pipeline — and a failure there happens after the merge, in front of a published tag.
+
+**Bug found by reading it: a missing permission.** The job declared
+
+```yaml
+permissions:
+  contents: write
+```
+
+Declaring a `permissions:` block at all sets **every scope not named to `none`**. The download
+step uses `gh run download "$GITHUB_RUN_ID"`, which reads the run's artifacts and therefore needs
+`actions: read` — so the step would have failed with 403 and taken the release with it. Added
+`actions: read`, with a comment saying why so it is not "tidied away" later.
+
+**Three robustness changes.**
+
+1. `GH_TOKEN` on the download step (the other steps had it; this one did not).
+2. Assets are now **located by name with `find`** instead of by the fixed path
+   `dist/release-web/mistpine-…zip`. That path assumes `gh run download` extracts straight into
+   `--dir`; if the CLI ever nests an artifact-named directory, the old code uploads nothing and
+   fails. Locating them also doubles as an existence check with a clear message.
+3. **Size plausibility** (PROMPT §14.5 asks for "sizes are plausible"): every binary asset must
+   be at least 256 KiB and `SHA256SUMS.txt` at least 200 bytes, so a truncated or empty upload is
+   caught before it is published rather than after.
+
+**Evidence.** The rewritten step was extracted from the workflow and executed locally against
+synthetic artifact trees with `gh` replaced by a stub, under the same `bash -e` the runner uses:
+
+| Case | Expected | Result |
+|---|---|---|
+| flat extraction layout | create + upload 7 | pass |
+| nested extraction layout | create + upload 7 | pass |
+| one asset missing | fail "missing downloaded asset" | pass |
+| one asset 64 bytes | fail "implausibly small asset" | pass |
+| `SHA256SUMS.txt` 50 bytes | fail "implausible SHA256SUMS.txt" | pass |
+| release already exists | skip create, upload 7 | pass |
+
+All `run:` blocks in both workflows still pass `bash -n`, and both files parse.
+
+**Limitation, stated plainly:** this is **local simulation, not a runner execution**. The dry run
+cannot exercise it (the job is skipped for `v0.1.0-rc`), so the publish path's first real
+execution is the `v0.1.0` run after the merge. The simulation covers everything except GitHub's
+own behaviour — token scopes, artifact extraction and the release API.

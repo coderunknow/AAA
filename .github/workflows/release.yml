@@ -672,11 +672,18 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+      # Declaring `permissions:` at all sets every scope not named here to
+      # `none`, and `gh run download` reads this run's artifacts -- so
+      # actions: read is required, not optional. Without it the download
+      # step fails with 403.
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.ref }}
       - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
           for a in release-web release-web-singlefile release-windows release-linux release-macos release-checksums; do
@@ -689,18 +696,43 @@ jobs:
         run: |
           SHA="${{ inputs.sha }}"
           [ -n "$SHA" ] || SHA="${GITHUB_SHA}"
+
+          # Resolve each asset by name under dist/ rather than by a fixed path.
+          # `gh run download` currently extracts straight into --dir, but betting
+          # the publish on that exact layout would fail the release on any CLI
+          # change. Locating them doubles as an existence check.
+          locate() {
+            local f
+            f=$(find dist -type f -name "$1" | head -1)
+            [ -n "$f" ] || { echo "missing downloaded asset: $1" >&2; return 1; }
+            echo "$f"
+          }
+          A_WEB=$(locate 'mistpine-v0.1.0-web.zip')
+          A_SINGLE=$(locate 'mistpine-v0.1.0-web-singlefile.html')
+          A_WIN=$(locate 'mistpine-v0.1.0-windows-x64.zip')
+          A_APPIMAGE=$(locate 'mistpine-v0.1.0-linux-x86_64.AppImage')
+          A_TAR=$(locate 'mistpine-v0.1.0-linux-x86_64.tar.gz')
+          A_MAC=$(locate 'mistpine-v0.1.0-macos-arm64.zip')
+          A_SUMS=$(locate 'SHA256SUMS.txt')
+
+          # Size plausibility (PROMPT 14.5): a real build of this project is many
+          # megabytes, so a truncated or empty upload is caught here instead of
+          # after it has been published.
+          for f in "$A_WEB" "$A_SINGLE" "$A_WIN" "$A_APPIMAGE" "$A_TAR" "$A_MAC"; do
+            sz=$(wc -c < "$f")
+            echo "$(basename "$f"): $sz bytes"
+            [ "$sz" -ge 262144 ] || { echo "implausibly small asset: $f ($sz bytes)" >&2; exit 1; }
+          done
+          sz=$(wc -c < "$A_SUMS")
+          echo "SHA256SUMS.txt: $sz bytes"
+          [ "$sz" -ge 200 ] || { echo "implausible SHA256SUMS.txt ($sz bytes)" >&2; exit 1; }
+
           if ! gh release view v0.1.0 >/dev/null 2>&1; then
             gh release create v0.1.0 --target "$SHA" --draft \
               --title "Mistpine v0.1.0" --notes-file docs/release-notes-v0.1.0.md
           fi
           gh release upload v0.1.0 --clobber \
-            dist/release-web/mistpine-v0.1.0-web.zip \
-            dist/release-web-singlefile/mistpine-v0.1.0-web-singlefile.html \
-            dist/release-windows/mistpine-v0.1.0-windows-x64.zip \
-            dist/release-linux/mistpine-v0.1.0-linux-x86_64.AppImage \
-            dist/release-linux/mistpine-v0.1.0-linux-x86_64.tar.gz \
-            dist/release-macos/mistpine-v0.1.0-macos-arm64.zip \
-            dist/release-checksums/SHA256SUMS.txt
+            "$A_WEB" "$A_SINGLE" "$A_WIN" "$A_APPIMAGE" "$A_TAR" "$A_MAC" "$A_SUMS"
       - name: Verify the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
