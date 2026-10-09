@@ -689,3 +689,41 @@ That matters: the release gate is zero console errors, so had `App::saveNow` use
 this scenario would have failed the build instead of passing unnoticed.
 
 Committing this moves the PR head, so CI and the release dry run are re-queued.
+
+### #22 — 2026-10-08 — NOTE: sandbox recycle reset the git metadata; recovered, nothing lost
+
+**What happened.** The sandbox was recycled mid-session. It wiped `~/.cache` (the bootstrap
+toolchain and the pinned bgfx/SDL sources, as DESIGN_LOG #10 and #12 already warned) **and**
+left `.git` in the state of a fresh shallow clone of `main`: `HEAD` pointed at the base commit
+`d1d50c9`, `git reflog` contained only `clone` and one `checkout`, and `git cat-file -t 5c3680f`
+failed — the branch's commits were absent from the local object database. `git status` therefore
+reported the entire M1–M5 body of work as uncommitted modifications against `d1d50c9`.
+
+**No work was lost.** The working tree was intact, and every commit was already on the remote
+(the runners had built `5c3680f` and both workflows were green on it). Recovery, after copying
+the tree outside the repository as insurance:
+
+```bash
+git fetch origin arena/7ae554fb-aaa
+git reset --mixed origin/arena/7ae554fb-aaa    # moves HEAD and the index, leaves files alone
+git branch --set-upstream-to=origin/arena/7ae554fb-aaa arena/7ae554fb-aaa
+```
+
+Verified afterwards: `git log --oneline -1` → `5c3680f`, and a recursive `diff -r` between the
+repository and the backup was empty, i.e. the tree is byte-identical.
+
+**Recorded because it is easy to misread as catastrophe.** The dangerous move would have been to
+"commit" the apparent diff against `d1d50c9`, which would have collapsed 20 commits into one and
+rewritten the branch. The safe move is to fetch and reset, not to commit.
+
+**Also re-checked while here.** The Pages pipeline is correctly configured after all: the `web`
+job uploads a Pages artifact with `actions/upload-pages-artifact@v3` on `main` pushes, and the
+`pages` job deploys it with `actions/deploy-pages@v4` under `pages: write` / `id-token: write`
+and `continue-on-error: true`. I had suspected a missing artifact step; reading the job showed it
+was there. So enabling Pages in *Settings → Pages → Source: GitHub Actions* should be sufficient
+— that is inference from the configuration, not a verified deployment.
+
+**Completed in the same commit:** `CHANGELOG.md` now states the two limitations that were
+disclosed elsewhere but missing from it — the **Windows 10 floor** implied by the Universal CRT
+imports, and the `file://` localStorage caveat for the single-file build (with its `nostorage`
+regression test).

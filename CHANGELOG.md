@@ -155,6 +155,14 @@ desktop builds and a web build, every artifact runnable immediately after downlo
   speed-scaled limb-motion bound; not a NaN, sliding foot or IK failure). See `DESIGN_LOG.md` #14.
 - macOS builds are ad-hoc signed, **not notarized**; unsigned Windows builds may trigger
   SmartScreen ("More info → Run anyway").
+- The Windows artifact links its compiler runtime statically but imports the Windows Universal
+  CRT (`api-ms-win-crt-*`), which is an operating-system component from **Windows 10** onwards,
+  so Windows 10 or later is the floor for that build. Every Windows build asserts its own import
+  table (`scripts/pe_deps.py`) and fails on any non-OS dependency.
+- The single-file web build stores saves in `localStorage`. Opening it directly from `file://`
+  means persistence depends on the browser allowing storage for that origin; if storage is
+  denied the game stays playable, says so once, and progress is lost on exit. This is covered by
+  the `nostorage` browser playtest.
 - The web build uses bgfx's WebGL2 (OpenGL ES 3.0) backend. WebGPU is not used or claimed.
 - No real-GPU benchmark has been run in the build sandbox (software rendering only); numbers
   from the sandbox are SwiftShader/software numbers and say nothing about GPU performance.

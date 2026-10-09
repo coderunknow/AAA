@@ -6,8 +6,9 @@ agent should be able to read this file, `git log`, and `gh run list` and continu
 without re-deriving anything.
 
 Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
-**Status: release gate met — CI green, full release dry run green. Awaiting owner merge approval
-(PROMPT §14.3); nothing has been merged.**
+**Status: release gate met — CI green (8/8), full release dry run green (6/6) on head `5c3680f`.
+Awaiting the owner's explicit merge approval (PROMPT §14.3); nothing has been merged.**
+`docs/release-notes-v0.1.0.md` is the draft of the release notes.
 
 ---
 
@@ -39,6 +40,20 @@ Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
   default branch). Release dry runs are triggered by **pushing the `v0.1.0-rc` tag**; the
   `publish` job is guarded by `(inputs.tag || github.ref_name) == 'v0.1.0'`, so an rc tag
   publishes nothing.
+* **A sandbox recycle resets the git metadata, not the files.** It wipes `~/.cache` (toolchain,
+  deps) *and* can leave `.git` as a fresh shallow clone of `main`, so `HEAD` sits at the base
+  commit `d1d50c9` while the working tree still holds all the work, and `git status` shows
+  everything as modified. Recovery, verified this session:
+
+  ```bash
+  tar --exclude=./.git -cf - . | tar -xf - -C /home/user/AAA-worktree-backup   # insure first
+  git fetch origin arena/7ae554fb-aaa
+  git reset --mixed origin/arena/7ae554fb-aaa        # moves HEAD + index, leaves files alone
+  git branch --set-upstream-to=origin/arena/7ae554fb-aaa arena/7ae554fb-aaa
+  ```
+
+  Nothing is lost: every commit is on the remote. Verify afterwards with `git log --oneline -1`
+  (expect the branch tip) and `git status --short` (expect only local edits).
 * Toolchain and deps live **outside git** and are **wiped when the sandbox recycles**:
   `~/.cache/aaa-toolchain/{env.sh,cmake,ninja,emscripten,...}`,
   `~/.cache/aaa-deps/{bgfx.cmake@f2ea8fb, SDL3@release-3.4.18}`.
@@ -76,10 +91,13 @@ Last updated: 2026-10-08 (session branch `arena/7ae554fb-aaa`).
 | **37805433751** | release | v0.1.0-rc | **f8bd485** | **failure** | shader-assets ✅ web ✅ macOS ✅ Linux ✅; Windows ❌ — audit ran correctly, flagged 13 `api-ms-win-crt-*` imports |
 | **37808662729** | ci | branch | **aa260b9** | **success** | all 8 jobs green |
 | **37808656086** | release | v0.1.0-rc | **aa260b9** | **success** | **FULLY GREEN — all 6 jobs, incl. SHA256SUMS** |
-| **37812123959** | ci | branch | **682aa64** | **success** | all 8 jobs green — **final head** |
-| **37812119086** | release | v0.1.0-rc | **682aa64** | **success** | all 6 jobs green — **final head** |
+| **37816644408** | ci | branch | **5c3680f** | **success** | all 8 jobs green — **current head** |
+| **37816642486** | release | v0.1.0-rc | **5c3680f** | **success** | all 6 jobs green — **current head** |
 
-`682aa64` is the branch head and is fully verified on both workflows. Nothing has been merged.
+`5c3680f` is the branch head and is fully verified on both workflows. Nothing has been merged.
+The new `nostorage` playtest ran and passed in **both** workflows (CI browser job; release web
+job against the single-file HTML over `file://`), so §13's "remain playable if persistence is
+unavailable" is now CI-verified and not merely implemented.
 
 **Round-4 fix (commit `HEAD~`-successor), both root-caused:**
 
@@ -167,7 +185,13 @@ reports `mergeStateStatus: UNSTABLE` while `mergeable` is `MERGEABLE`.
 * **GitHub Pages cannot be enabled by me.** `gh api -X POST repos/coderunknow/AAA/pages`
   → **403 "Resource not accessible by integration"** (token lacks admin). Owner action.
   Without Pages, the "web build on a static host" acceptance criterion is **not** satisfied
-  end-to-end; the Pages workflow job exists and is skipped/deploy-gated.
+  end-to-end.
+  The pipeline side is ready and was re-checked: the `web` job uploads a Pages artifact with
+  `actions/upload-pages-artifact@v3` (main pushes only) and the `pages` job deploys it with
+  `actions/deploy-pages@v4` under `permissions: pages: write, id-token: write` and
+  `continue-on-error: true`. So **enabling Pages in Settings → Pages → Source: GitHub Actions
+  should be the only step required** — but that is inference from the configuration, not a
+  verified deployment.
   Workaround available to the owner: publish the single-file HTML as a release asset
   (it runs from `file://`).
 * **I cannot see images.** Nothing is claimed as "visually inspected". Screenshots are
@@ -200,8 +224,8 @@ Privacy & Security → Open Anyway.
 1. ~~Get CI green on the PR head~~ — **done, all 8 jobs success (`37808662729`).**
 2. ~~Get the release dry run green~~ — **done, all 6 jobs success (`37808656086`).**
 3. ~~Fix the Windows and Linux release blockers~~ — **done (rounds 4-6).**
-4. ~~Re-validate the head after the final design-log commit~~ — **done: CI `37812123959` and
-   release `37812119086` are both green on head `682aa64`.**
+4. ~~Re-validate the head~~ — **done: CI `37816644408` and release `37816642486` are both green
+   on head `5c3680f`.**
    Windows `Dependency audit (PE import table)` is the only step that has ever failed in the
    last three dry runs, and each failure has been the audit itself, not the artifact. The
    annotation carries the toolchain (`gcc -dumpmachine`), the machine type and the full import
